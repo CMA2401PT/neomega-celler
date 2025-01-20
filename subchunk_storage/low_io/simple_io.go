@@ -9,9 +9,10 @@ import (
 )
 
 type SimpleMemoryIO struct {
-	Versions map[celler.SubChunkPos]celler.ChunkVersion
-	Datas    map[celler.SubChunkPos][]byte
-	changed  bool
+	Versions     map[celler.SubChunkPos]celler.ChunkVersion
+	Datas        map[celler.SubChunkPos][]byte
+	changed      bool
+	SharedBuffer *bytes.Buffer
 }
 
 func NewSimpleMemoryIO() *SimpleMemoryIO {
@@ -60,12 +61,16 @@ func (r *writeReciver) Close() error {
 }
 
 func (io *SimpleMemoryIO) GetWriter(p celler.SubChunkPos, v celler.ChunkVersion) io.WriteCloser {
+	if io.SharedBuffer == nil {
+		io.SharedBuffer = bytes.NewBuffer(nil)
+	}
+	io.SharedBuffer.Reset()
 	return &writeReciver{
-		bytes.NewBuffer(nil),
+		io.SharedBuffer,
 		func(data []byte) {
 			io.changed = true
 			io.Versions[p] = v
-			io.Datas[p] = data
+			io.Datas[p] = bytes.Clone(data)
 		},
 	}
 }
@@ -84,7 +89,8 @@ func (sio *SimpleMemoryIOToBytes) Close() error {
 
 		return nil
 	}
-	buf := bytes.NewBuffer(nil)
+	buf := sio.SharedBuffer
+	buf.Reset()
 	keyArr := make([]celler.SubChunkPos, 0, len(sio.Versions))
 	for k := range sio.Versions {
 		keyArr = append(keyArr, k)
@@ -122,6 +128,7 @@ func NewSimpleMemoryIOToBytes(data []byte) *SimpleMemoryIOToBytes {
 		SimpleMemoryIO: *NewSimpleMemoryIO(),
 		genBytes:       data,
 	}
+	s.SharedBuffer = bytes.NewBuffer(nil)
 
 	if len(data) != 0 {
 		buf := bytes.NewReader(data)
