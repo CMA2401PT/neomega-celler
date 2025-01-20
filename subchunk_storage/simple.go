@@ -71,14 +71,6 @@ func (s *Simple[Data, Change, DataPtr]) DumpData(writer low_io.SubChunkDataWrite
 		wt.Close()
 	}
 
-	for p, d := range s.Data {
-		if d.Version() == existVersions[p] {
-			continue
-		}
-		wt := writer.GetWriter(p, d.Version())
-		d.Dump(wt)
-		wt.Close()
-	}
 	for pos := range existVersions {
 		if _, found := s.Data[pos]; !found {
 			writer.Drop(pos)
