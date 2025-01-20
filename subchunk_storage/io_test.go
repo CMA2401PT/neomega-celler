@@ -95,12 +95,11 @@ func TestIO(t *testing.T) {
 
 func TestGridIO(t *testing.T) {
 	// 随机数是难以压缩的，所以我们这边先不考虑压缩
+	newGrid := func() GridSubChunkStorage[*subchunk.Versioned[uint32, uint32, *layer_storage.Palette[uint32], *layer_storage.Palette[uint32], *layer_storage.Map[celler.SNBT]], celler.SubChunkDataChange[uint32, uint32]] {
+		return NewSimple(uint32(100), uint32(200), subchunk.MakeStandardVersioned)
+	}
 	storage := low_io.NewSimpleGridIO(low_io.NoCompress{}, 2*(64*64)/(4*4))
-	s := NewIOGrid(uint32(100), uint32(200),
-		subchunk.MakeStandardVersioned,
-		2, 2, (64 * 64),
-		storage,
-	)
+	s := NewIOGrid(newGrid, 2, 2, (64 * 64), storage)
 	for p, s := range s.IterSubChunks {
 		t.Errorf("should get nothing but %v %v", p, s)
 	}

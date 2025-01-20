@@ -7,28 +7,34 @@ import (
 	"github.com/hashicorp/golang-lru/v2/simplelru"
 )
 
+type GridSubChunkStorage[Data any, Change any] interface {
+	celler.SubChunkStorage[Data, Change]
+	IsEmpty() bool
+	LoadData(low_io.SubChunkDataReadCloser)
+	DumpData(low_io.SubChunkDataWriteCloser)
+}
+
 // 不完全支持随机访问，可能导致读/写放大到 Grid 倍
 type IOGrid[Data any, Change any, DataPtr StandardSubChunk[Data, Change]] struct {
-	Data                   map[GridPos]*Simple[Data, Change, DataPtr]
+	Data                   map[GridPos]GridSubChunkStorage[DataPtr, Change]
 	GridXLevel, GridZLevel uint32
-	NewEmpty               func() DataPtr
+	newGrid                func() GridSubChunkStorage[DataPtr, Change]
 	ActivateGrid           *simplelru.LRU[GridPos, struct{}]
 	Storage                low_io.GridStorage
 	hasLast                bool
 	lastPos                GridPos
-	lastPtr                *Simple[Data, Change, DataPtr]
+	lastPtr                GridSubChunkStorage[DataPtr, Change]
 }
 
-func NewIOGrid[BlockIDT, AttachT ~uint32, Data any, DataPtr StandardSubChunk[Data, celler.SubChunkDataChange[BlockIDT, AttachT]]](
-	bid BlockIDT, attach AttachT,
-	makeNew func(BlockIDT, AttachT) DataPtr,
+func NewIOGrid[Data any, Change any, DataPtr StandardSubChunk[Data, Change]](
+	makeNew func() GridSubChunkStorage[DataPtr, Change],
 	gridXLevel uint32, gridZLevel uint32,
 	maxActivateChunks int,
 	storage low_io.GridStorage,
-) *IOGrid[Data, celler.SubChunkDataChange[BlockIDT, AttachT], DataPtr] {
-	s := &IOGrid[Data, celler.SubChunkDataChange[BlockIDT, AttachT], DataPtr]{
-		Data:       make(map[GridPos]*Simple[Data, celler.SubChunkDataChange[BlockIDT, AttachT], DataPtr]),
-		NewEmpty:   func() DataPtr { return makeNew(bid, attach) },
+) *IOGrid[Data, Change, DataPtr] {
+	s := &IOGrid[Data, Change, DataPtr]{
+		Data:       make(map[GridPos]GridSubChunkStorage[DataPtr, Change]),
+		newGrid:    makeNew,
 		GridXLevel: gridXLevel,
 		GridZLevel: gridZLevel,
 		Storage:    storage,
@@ -45,13 +51,6 @@ func NewIOGrid[BlockIDT, AttachT ~uint32, Data any, DataPtr StandardSubChunk[Dat
 func (s *IOGrid[Data, Change, DataPtr]) InsightFn() func(celler.ChunkPos) (hash int) {
 	return func(pos celler.ChunkPos) (hash int) {
 		return (int(pos.Z)>>s.GridZLevel)<<s.GridXLevel + (int(pos.X) >> s.GridXLevel)
-	}
-}
-
-func (s *IOGrid[Data, Change, DataPtr]) newGrid() *Simple[Data, Change, DataPtr] {
-	return &Simple[Data, Change, DataPtr]{
-		Data:     make(map[celler.SubChunkPos]DataPtr),
-		NewEmpty: s.NewEmpty,
 	}
 }
 
@@ -86,7 +85,7 @@ func (s *IOGrid[Data, Change, DataPtr]) fromStorageKey(key uint64) GridPos {
 }
 
 // 从底层存储中读取目标 grid
-func (s *IOGrid[Data, Change, DataPtr]) loadGrid(gp GridPos) *Simple[Data, Change, DataPtr] {
+func (s *IOGrid[Data, Change, DataPtr]) loadGrid(gp GridPos) GridSubChunkStorage[DataPtr, Change] {
 	reader := s.Storage.DataReader(s.toStorageKey(gp))
 	if reader == nil {
 		return nil
@@ -97,7 +96,7 @@ func (s *IOGrid[Data, Change, DataPtr]) loadGrid(gp GridPos) *Simple[Data, Chang
 }
 
 // 如果没有加载 grid， 则从底层存储中读取目标 grid, 如果底层也没有，则返回空
-func (s *IOGrid[Data, Change, DataPtr]) ensureGridLoaded(gp GridPos) (grid *Simple[Data, Change, DataPtr]) {
+func (s *IOGrid[Data, Change, DataPtr]) ensureGridLoaded(gp GridPos) (grid GridSubChunkStorage[DataPtr, Change]) {
 	if s.hasLast && s.lastPos == gp && s.lastPtr != nil {
 		return s.lastPtr
 	}
@@ -121,7 +120,7 @@ func (s *IOGrid[Data, Change, DataPtr]) ensureGridLoaded(gp GridPos) (grid *Simp
 }
 
 // 确保 grid 存在以供写入，若不活跃且底层存储也没有这个数据，新建一个空 grid
-func (s *IOGrid[Data, Change, DataPtr]) ensureGridForWrite(gp GridPos) (grid *Simple[Data, Change, DataPtr]) {
+func (s *IOGrid[Data, Change, DataPtr]) ensureGridForWrite(gp GridPos) (grid GridSubChunkStorage[DataPtr, Change]) {
 	if s.hasLast && s.lastPos == gp && s.lastPtr != nil {
 		return s.lastPtr
 	}
@@ -218,7 +217,7 @@ func (s *IOGrid[Data, Change, DataPtr]) Set(pos celler.SubChunkPos, data DataPtr
 	} else {
 		if data == nil {
 			grid.Set(cp, data)
-			if len(grid.Data) == 0 {
+			if grid.IsEmpty() {
 				delete(s.Data, gp)
 				s.hasLast = false
 			}
@@ -227,29 +226,6 @@ func (s *IOGrid[Data, Change, DataPtr]) Set(pos celler.SubChunkPos, data DataPtr
 		}
 	}
 }
-
-// func (s *IOGrid[Data, Change, DataPtr]) getGrid(gp GridPos) (grid *Simple[Data, Change, DataPtr]) {
-// 	if s.hasLast && s.lastPos == gp {
-// 		return s.lastPtr
-// 	}
-// 	defer func() {
-// 		s.hasLast = true
-// 		s.lastPos = gp
-// 		s.lastPtr = grid
-// 		s.lruCounter += 1
-// 		s.ActivateGrid[gp] = s.lruCounter
-// 		s.doLRU()
-// 	}()
-// 	var found bool
-// 	if grid, found = s.Data[gp]; found {
-// 		return
-// 	}
-// 	grid = s.loadGrid(gp)
-// 	if grid != nil {
-// 		s.Data[gp] = grid
-// 	}
-// 	return
-// }
 
 func (s *IOGrid[Data, Change, DataPtr]) Get(pos celler.SubChunkPos) DataPtr {
 	if s == nil {
@@ -299,7 +275,7 @@ func (s *IOGrid[Data, Change, DataPtr]) ApplyChange(pos celler.SubChunkPos, chan
 		grid := s.ensureGridLoaded(gp)
 		if grid != nil {
 			grid.ApplyChange(cp, change)
-			if len(grid.Data) == 0 {
+			if grid.IsEmpty() {
 				delete(s.Data, gp)
 				s.hasLast = false
 			}
