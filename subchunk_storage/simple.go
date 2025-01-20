@@ -116,6 +116,7 @@ func (s *Simple[Data, Change, DataPtr]) Set(pos celler.SubChunkPos, data DataPtr
 			return
 		} else {
 			delete(s.Data, pos)
+			return
 		}
 	}
 	if s.Data == nil {
