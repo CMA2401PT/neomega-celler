@@ -23,12 +23,11 @@ type LazySimple[Data any, DataPtr BasicSubchunkWithIO[Data]] struct {
 	DropData     map[celler.SubChunkPos]struct{}
 }
 
-func NewLazySimple[BlockIDT, AttachT ~uint32, Data any, DataPtr StandardSubChunk[Data, celler.SubChunkDataChange[BlockIDT, AttachT]]](
-	bid BlockIDT, attach AttachT,
-	makeNew func(BlockIDT, AttachT) DataPtr,
+func NewLazySimple[Data any, DataPtr BasicSubchunkWithIO[Data]](
+	makeNew func() DataPtr,
 ) *LazySimple[Data, DataPtr] {
 	return &LazySimple[Data, DataPtr]{
-		NewEmpty: func() DataPtr { return makeNew(bid, attach) },
+		NewEmpty: makeNew,
 	}
 }
 

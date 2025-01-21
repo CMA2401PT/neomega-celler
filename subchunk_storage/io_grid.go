@@ -3,6 +3,7 @@ package subchunk_storage
 import (
 	"celler"
 	"celler/subchunk_storage/low_io"
+	"fmt"
 
 	"github.com/hashicorp/golang-lru/v2/simplelru"
 )
@@ -41,6 +42,9 @@ func NewIOGrid[Data any, DataPtr BasicSubchunk[Data]](
 		Storage:    storage,
 	}
 	maxActivateGrids := maxActivateSubChunks >> (gridXLevel + gridYLevel + gridZLevel)
+	if maxActivateGrids < 1 {
+		panic(fmt.Errorf("max activate grids should > %v", 1<<(gridXLevel+gridYLevel+gridZLevel)))
+	}
 	activateGrid, _ := simplelru.NewLRU(maxActivateGrids, func(pos low_io.GridPos, value struct{}) {
 		s.swapOutGrid(pos)
 	})

@@ -67,9 +67,9 @@ func testStorageWrite[BlockIDT, AttachT ~uint32](
 	], 0, elementCounts)
 	st := time.Now()
 	for i := 0; i < elementCounts; i++ {
-		X := celler.ChunkUnit(r.Int() % 1000)
-		Z := celler.ChunkUnit(r.Int() % 1000)
-		Y := celler.ChunkUnit(r.Int() % 32)
+		X := celler.ChunkUnit(r.Int() % 64)
+		Z := celler.ChunkUnit(r.Int() % 64)
+		Y := celler.ChunkUnit(r.Int() % 4)
 		var chunk *subchunk.Versioned[BlockIDT, AttachT,
 			*layer_storage.Palette[BlockIDT],
 			*layer_storage.Palette[AttachT],
@@ -120,11 +120,21 @@ func testStorageRead[BlockIDT, AttachT ~uint32](
 		*layer_storage.Map[celler.SNBT],
 	]], testDatas map[celler.SubChunkPos][]byte, removedList map[celler.SubChunkPos]struct{}) {
 	st := time.Now()
-	for pos, d := range testDatas {
+	back := map[celler.SubChunkPos]*subchunk.Versioned[BlockIDT, AttachT,
+		*layer_storage.Palette[BlockIDT],
+		*layer_storage.Palette[AttachT],
+		*layer_storage.Map[celler.SNBT]]{}
+	for pos := range testDatas {
 		stor := storage.Get(pos)
 		if stor == nil {
 			t.Errorf("should get sth but nil @ %v", pos)
 		}
+		back[pos] = stor
+
+	}
+	fmt.Println("read time:", time.Now().Sub(st).Seconds())
+	for pos, d := range testDatas {
+		stor := back[pos]
 		buf := bytes.NewBuffer(nil)
 		stor.Dump(buf)
 		ret := buf.Bytes()
@@ -148,5 +158,5 @@ func testStorageRead[BlockIDT, AttachT ~uint32](
 	if count != len(testDatas) {
 		t.Error("count mismatch")
 	}
-	fmt.Println("read and dump time:", time.Now().Sub(st).Seconds())
+
 }

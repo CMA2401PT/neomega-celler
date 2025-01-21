@@ -12,8 +12,9 @@ type SimpleGridIO struct {
 	compressor Compressor
 	// 当写入时，可以先从 cache 检查是否已经打开以供读取
 	// 这对于无修改的 dump 很有帮助
-	cache        *simplelru.LRU[GridPos, *SimpleMemoryIOToBytes]
-	SharedBuffer *bytes.Buffer
+	cache                        *simplelru.LRU[GridPos, *SimpleMemoryIOToBytes]
+	SharedBuffer                 *bytes.Buffer
+	WriterCounter, ReaderCounter int
 }
 
 func (gio SimpleGridIO) TotalSize() (s int) {
@@ -33,7 +34,7 @@ func NewSimpleGridIO(compress Compressor, maxCaches int) *SimpleGridIO {
 	}
 }
 
-func (gio SimpleGridIO) IterGrid(fn func(GridPos) (next bool)) {
+func (gio *SimpleGridIO) IterGrid(fn func(GridPos) (next bool)) {
 	for k := range gio.storage {
 		if !fn(k) {
 			return
@@ -41,7 +42,7 @@ func (gio SimpleGridIO) IterGrid(fn func(GridPos) (next bool)) {
 	}
 }
 
-func (gio SimpleGridIO) DataWriter(key GridPos) SubChunkDataWriteCloser {
+func (gio *SimpleGridIO) DataWriter(key GridPos) SubChunkDataWriteCloser {
 	if gio.writing {
 		panic("reopen writer on write")
 	}
@@ -52,6 +53,7 @@ func (gio SimpleGridIO) DataWriter(key GridPos) SubChunkDataWriteCloser {
 		if data, found := gio.storage[key]; !found {
 			w = NewSimpleMemoryIOToBytes(nil)
 		} else {
+			gio.ReaderCounter += 1
 			w = NewSimpleMemoryIOToBytes(gio.compressor.Decompress(data))
 		}
 	}
@@ -61,13 +63,14 @@ func (gio SimpleGridIO) DataWriter(key GridPos) SubChunkDataWriteCloser {
 	w.onClose = func(b []byte, change bool) {
 		gio.writing = false
 		if change {
+			gio.WriterCounter += 1
 			gio.storage[key] = bytes.Clone(gio.compressor.Compress(b))
 		}
 	}
 	return w
 }
 
-func (gio SimpleGridIO) DropGrid(key GridPos) {
+func (gio *SimpleGridIO) DropGrid(key GridPos) {
 	if gio.writing {
 		panic("drop on write")
 	}
@@ -75,7 +78,7 @@ func (gio SimpleGridIO) DropGrid(key GridPos) {
 	gio.cache.Remove(key)
 }
 
-func (gio SimpleGridIO) DataReader(key GridPos) SubChunkDataReadCloser {
+func (gio *SimpleGridIO) DataReader(key GridPos) SubChunkDataReadCloser {
 	if gio.writing {
 		panic("open reader on write")
 	}
@@ -86,6 +89,7 @@ func (gio SimpleGridIO) DataReader(key GridPos) SubChunkDataReadCloser {
 	if data, found := gio.storage[key]; !found {
 		return nil
 	} else {
+		gio.ReaderCounter += 1
 		w = NewSimpleMemoryIOToBytes(gio.compressor.Decompress(data))
 		gio.cache.Add(key, w)
 	}

@@ -2,10 +2,8 @@ package enhance
 
 import (
 	"celler"
-	"celler/layer_storage"
 	"celler/subchunk"
 	"celler/subchunk_storage"
-	"fmt"
 	"math/rand"
 	"testing"
 )
@@ -85,32 +83,4 @@ func TestSyncer(t *testing.T) {
 	if d.Get(tp) != nil {
 		t.Errorf("should get nothing but: %v", s.Get(celler.SubChunkPos{}))
 	}
-}
-
-func MakeRandomVersionedSubChunk[BlockIDT, AttachT ~uint32](r *rand.Rand) *subchunk.Versioned[BlockIDT, AttachT,
-	*layer_storage.Palette[BlockIDT],
-	*layer_storage.Palette[AttachT],
-	*layer_storage.Map[celler.SNBT],
-] {
-
-	c := subchunk.MakeStandardVersioned[BlockIDT, AttachT](100, 200)
-	for x := 0; x < 16; x++ {
-		for y := 0; y < 16; y++ {
-			for z := 0; z < 16; z++ {
-				bockID := BlockIDT(r.Int()) % 8
-				attach := AttachT(r.Int()) % 4
-				snbt := celler.SNBT("")
-				if r.Int()%256 == 0 {
-					snbt = celler.SNBT(fmt.Sprintf("%v", r.Int()))
-				}
-				c.ChangeBlock((celler.SubChunkBlockDelta[BlockIDT, AttachT]{}).
-					SetPos(celler.ToSubChunkBlockPos(x, y, z)).
-					SetID(bockID).
-					SetAttach(attach).
-					SetSNBT(snbt),
-				)
-			}
-		}
-	}
-	return c
 }

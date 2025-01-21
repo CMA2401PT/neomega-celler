@@ -37,3 +37,25 @@ func MakeStandardVersioned[BlockIDT ~uint32, AttachT ~uint32](blockID BlockIDT, 
 		versionData: make([]celler.SubChunkBlockDeltaWithVersion[BlockIDT, AttachT], 0),
 	}
 }
+
+func StandardVersionedFactory[BlockIDT ~uint32, AttachT ~uint32](blockID BlockIDT, attach AttachT) func() *Versioned[BlockIDT, AttachT,
+	*layer_storage.Palette[BlockIDT],
+	*layer_storage.Palette[AttachT],
+	*layer_storage.Map[celler.SNBT],
+] {
+	return func() *Versioned[BlockIDT, AttachT,
+		*layer_storage.Palette[BlockIDT],
+		*layer_storage.Palette[AttachT],
+		*layer_storage.Map[celler.SNBT],
+	] {
+		return &Versioned[BlockIDT, AttachT,
+			*layer_storage.Palette[BlockIDT],
+			*layer_storage.Palette[AttachT],
+			*layer_storage.Map[celler.SNBT],
+		]{
+			Simple:      *MakeStandardSimple(blockID, attach),
+			versionData: make([]celler.SubChunkBlockDeltaWithVersion[BlockIDT, AttachT], 0),
+		}
+	}
+
+}

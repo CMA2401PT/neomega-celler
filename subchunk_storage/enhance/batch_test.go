@@ -15,7 +15,7 @@ import (
 
 func TestStorage(t *testing.T) {
 	newGrid := func() subchunk_storage.GridSubChunkStorage[*subchunk.Versioned[uint32, uint32, *layer_storage.Palette[uint32], *layer_storage.Palette[uint32], *layer_storage.Map[celler.SNBT]]] {
-		return subchunk_storage.NewLazySimple(uint32(100), uint32(200), subchunk.MakeStandardVersioned)
+		return subchunk_storage.NewLazySimple(subchunk.StandardVersionedFactory(uint32(100), uint32(200)))
 	}
 	storage := low_io.NewSimpleGridIO(low_io.NoCompress{}, (64 * 64))
 	base := subchunk_storage.NewIOGrid(newGrid, 2, 2, 2, (64 * 64 * 32), storage)

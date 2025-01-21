@@ -16,7 +16,7 @@ func TestLazySimpleIO(t *testing.T) {
 		*layer_storage.Palette[uint32],
 		*layer_storage.Map[celler.SNBT],
 	]] {
-		return NewLazySimple(uint32(100), uint32(200), subchunk.MakeStandardVersioned)
+		return NewLazySimple(subchunk.StandardVersionedFactory(uint32(100), uint32(200)))
 	}
 
 	storageI, datas, removes := testStorageWrite(t, makerFn)
@@ -36,7 +36,7 @@ func TestLazySimpleIO(t *testing.T) {
 	fmt.Printf("dump time: %v\n", time.Since(st))
 
 	lowStorageBack := low_io.NewSimpleMemoryIOToBytes(lowStorage.Bytes())
-	back := NewLazySimple(uint32(100), uint32(200), subchunk.MakeStandardVersioned)
+	back := NewLazySimple(subchunk.StandardVersionedFactory(uint32(100), uint32(200)))
 	st = time.Now()
 	back.LoadData(lowStorageBack)
 	fmt.Printf("load time: %v\n", time.Since(st))
