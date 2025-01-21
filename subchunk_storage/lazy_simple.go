@@ -5,7 +5,14 @@ import (
 	"celler/subchunk_storage/low_io"
 )
 
-type LazySimple[Data any, Change any, DataPtr StandardSubChunk[Data, Change]] struct {
+type BasicSubchunkWithIO[Data any] interface {
+	*Data
+	Version() celler.ChunkVersion
+	celler.In
+	celler.Out
+}
+
+type LazySimple[Data any, DataPtr BasicSubchunkWithIO[Data]] struct {
 	Data         map[celler.SubChunkPos]DataPtr
 	hasLast      bool
 	lastPos      celler.SubChunkPos
@@ -19,23 +26,23 @@ type LazySimple[Data any, Change any, DataPtr StandardSubChunk[Data, Change]] st
 func NewLazySimple[BlockIDT, AttachT ~uint32, Data any, DataPtr StandardSubChunk[Data, celler.SubChunkDataChange[BlockIDT, AttachT]]](
 	bid BlockIDT, attach AttachT,
 	makeNew func(BlockIDT, AttachT) DataPtr,
-) *LazySimple[Data, celler.SubChunkDataChange[BlockIDT, AttachT], DataPtr] {
-	return &LazySimple[Data, celler.SubChunkDataChange[BlockIDT, AttachT], DataPtr]{
+) *LazySimple[Data, DataPtr] {
+	return &LazySimple[Data, DataPtr]{
 		NewEmpty: func() DataPtr { return makeNew(bid, attach) },
 	}
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) IsEmpty() bool {
+func (s *LazySimple[Data, DataPtr]) IsEmpty() bool {
 	return len(s.Data) == 0 && len(s.LazyVersions) == 0
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) LoadData(reader low_io.SubChunkDataReadCloser) {
+func (s *LazySimple[Data, DataPtr]) LoadData(reader low_io.SubChunkDataReadCloser) {
 	s.LazyVersions = reader.CurrentVersion()
 	s.LazyReader = reader
 	s.DropData = make(map[celler.SubChunkPos]struct{})
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) DumpData(writer low_io.SubChunkDataWriteCloser) {
+func (s *LazySimple[Data, DataPtr]) DumpData(writer low_io.SubChunkDataWriteCloser) {
 	defer writer.Close()
 	existVersions := writer.CurrentVersion()
 	for p := range s.Data {
@@ -53,11 +60,11 @@ func (s *LazySimple[Data, Change, DataPtr]) DumpData(writer low_io.SubChunkDataW
 	}
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) InsightFn() func(celler.ChunkPos) (hash int) {
+func (s *LazySimple[Data, DataPtr]) InsightFn() func(celler.SubChunkPos) (hash uint64) {
 	return nil
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) loadSubchunk(p celler.SubChunkPos) DataPtr {
+func (s *LazySimple[Data, DataPtr]) loadSubchunk(p celler.SubChunkPos) DataPtr {
 	d := s.NewEmpty()
 	rd := s.LazyReader.GetReader(p)
 	d.Load(rd)
@@ -66,7 +73,7 @@ func (s *LazySimple[Data, Change, DataPtr]) loadSubchunk(p celler.SubChunkPos) D
 
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) ensureLoaded(pos celler.SubChunkPos) (ptr DataPtr) {
+func (s *LazySimple[Data, DataPtr]) ensureLoaded(pos celler.SubChunkPos) (ptr DataPtr) {
 	if ptr, found := s.Data[pos]; found {
 		return ptr
 	}
@@ -87,7 +94,7 @@ func (s *LazySimple[Data, Change, DataPtr]) ensureLoaded(pos celler.SubChunkPos)
 	return nil
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) IterSubChunks(cb func(celler.SubChunkPos, DataPtr) (next bool)) {
+func (s *LazySimple[Data, DataPtr]) IterSubChunks(cb func(celler.SubChunkPos, DataPtr) (next bool)) {
 	if s == nil {
 		return
 	}
@@ -109,7 +116,7 @@ func (s *LazySimple[Data, Change, DataPtr]) IterSubChunks(cb func(celler.SubChun
 	}
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) Get(pos celler.SubChunkPos) DataPtr {
+func (s *LazySimple[Data, DataPtr]) Get(pos celler.SubChunkPos) DataPtr {
 	if s == nil {
 		return nil
 	}
@@ -122,21 +129,35 @@ func (s *LazySimple[Data, Change, DataPtr]) Get(pos celler.SubChunkPos) DataPtr 
 	return s.lastPtr
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) Set(pos celler.SubChunkPos, data DataPtr) {
+func (s *LazySimple[Data, DataPtr]) GetOrCreate(pos celler.SubChunkPos) DataPtr {
+	current := s.Get(pos)
+	if current == nil {
+		current = s.NewEmpty()
+		s.Set(pos, current)
+	}
+	return current
+}
+
+func (s *LazySimple[Data, DataPtr]) Drop(pos celler.SubChunkPos) {
+	if s.LazyVersions != nil {
+		s.DropData[pos] = struct{}{}
+	}
+	if s.Data == nil {
+		return
+	}
+	delete(s.Data, pos)
+	if s.lastPos == pos {
+		s.lastPtr = nil
+	}
+}
+func (s *LazySimple[Data, DataPtr]) Set(pos celler.SubChunkPos, data DataPtr) {
+	if data == nil {
+		s.Drop(pos)
+		return
+	}
 	s.hasLast = true
 	s.lastPos = pos
 	s.lastPtr = data
-	if data == nil {
-		if s.Data == nil {
-			return
-		} else {
-			delete(s.Data, pos)
-			if s.LazyVersions != nil {
-				s.DropData[pos] = struct{}{}
-			}
-			return
-		}
-	}
 	if s.Data == nil {
 		s.Data = make(map[celler.SubChunkPos]DataPtr)
 	}
@@ -146,35 +167,7 @@ func (s *LazySimple[Data, Change, DataPtr]) Set(pos celler.SubChunkPos, data Dat
 	s.Data[pos] = data
 }
 
-func (s *LazySimple[Data, Change, DataPtr]) QueryChange(pos celler.SubChunkPos, version celler.ChunkVersion) celler.SubChunkChange[Change] {
-	current := s.Get(pos)
-	if current == nil {
-		if version == 0 {
-			return celler.SubChunkChange[Change]{
-				Valid: true,
-			}
-		} else {
-			return celler.SubChunkChange[Change]{
-				Valid: false,
-				Drop:  true,
-			}
-		}
-	}
-	if current.Version() == version {
-		return celler.SubChunkChange[Change]{
-			Valid: true,
-		}
-	} else {
-		change := current.QueryChange(version)
-		return celler.SubChunkChange[Change]{
-			Valid:  false,
-			Drop:   false,
-			Change: &change,
-		}
-	}
-}
-
-func (s *LazySimple[Data, Change, DataPtr]) GetVersion(pos celler.SubChunkPos) celler.ChunkVersion {
+func (s *LazySimple[Data, DataPtr]) GetVersion(pos celler.SubChunkPos) celler.ChunkVersion {
 	if s == nil {
 		return 0
 	}
@@ -191,33 +184,4 @@ func (s *LazySimple[Data, Change, DataPtr]) GetVersion(pos celler.SubChunkPos) c
 		return 0
 	}
 	return s.LazyVersions[pos]
-}
-
-func (s *LazySimple[Data, Change, DataPtr]) ApplyChange(pos celler.SubChunkPos, change celler.SubChunkChange[Change]) {
-	if change.Valid {
-		return
-	}
-	if change.Drop {
-		if s != nil && s.Data != nil {
-			delete(s.Data, pos)
-		}
-		s.lastPtr = nil
-		if s.LazyVersions != nil {
-			s.DropData[pos] = struct{}{}
-		}
-		return
-	}
-	current := s.Get(pos)
-	if current == nil {
-		current = s.NewEmpty()
-		if s.Data == nil {
-			s.Data = make(map[celler.SubChunkPos]DataPtr)
-		}
-		s.Data[pos] = current
-		if s.LazyVersions != nil {
-			delete(s.DropData, pos)
-		}
-		s.lastPtr = current
-	}
-	current.ApplyChange(*change.Change)
 }

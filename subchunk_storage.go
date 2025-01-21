@@ -1,5 +1,29 @@
 package celler
 
+type SubChunkStorageRead[Data any] interface {
+	IterSubChunks(func(SubChunkPos, Data) (next bool))
+}
+
+type SubChunkStorageRandomRead[Data any] interface {
+	InsightFn() func(SubChunkPos) (hash uint64)
+	Get(SubChunkPos) Data
+	GetVersion(SubChunkPos) ChunkVersion
+}
+
+type SubChunkStorageRandomWrite[Data any] interface {
+	// 用于探测底层存储结构特性
+	InsightFn() func(SubChunkPos) (hash uint64)
+	Set(SubChunkPos, Data)
+	Drop(SubChunkPos)
+}
+
+type SubChunkStorage[Data any] interface {
+	SubChunkStorageRead[Data]
+	SubChunkStorageRandomRead[Data]
+	SubChunkStorageRandomWrite[Data]
+	GetOrCreate(SubChunkPos) Data
+}
+
 type SubChunkChange[Change any] struct {
 	// case 1. 通常更新: Valid=false, Drop=false
 	// 从 空 或现有 Cache 更新到目标
@@ -11,20 +35,6 @@ type SubChunkChange[Change any] struct {
 	Change *Change
 }
 
-type SubChunkStorageRead[Data any] interface {
-	IterSubChunks(func(SubChunkPos, Data) (next bool))
-}
-
-type SubChunkStorageRandomRead[Data any] interface {
-	InsightFn() func(ChunkPos) (hash int)
-	Get(SubChunkPos) Data
-}
-
-type SubChunkStorageRandomWrite[Data any] interface {
-	InsightFn() func(ChunkPos) (hash int)
-	Set(SubChunkPos, Data)
-}
-
 type SubChunkStorageSyncProvider[Change any] interface {
 	// 用于同步数据
 	QueryChange(SubChunkPos, ChunkVersion) SubChunkChange[Change]
@@ -32,14 +42,10 @@ type SubChunkStorageSyncProvider[Change any] interface {
 
 type SubChunkStorageSyncReciver[Change any] interface {
 	// 用于同步数据
-	GetVersion(SubChunkPos) ChunkVersion
 	ApplyChange(SubChunkPos, SubChunkChange[Change])
 }
 
-type SubChunkStorage[Data any, Change any] interface {
-	SubChunkStorageRead[Data]
-	SubChunkStorageRandomRead[Data]
-	SubChunkStorageRandomWrite[Data]
+type SubChunkStorageSyncer[Change any] interface {
 	SubChunkStorageSyncProvider[Change]
 	SubChunkStorageSyncReciver[Change]
 }

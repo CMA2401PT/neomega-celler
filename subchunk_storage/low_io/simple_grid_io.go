@@ -7,12 +7,12 @@ import (
 )
 
 type SimpleGridIO struct {
-	storage    map[uint64][]byte
+	storage    map[GridPos][]byte
 	writing    bool
 	compressor Compressor
 	// 当写入时，可以先从 cache 检查是否已经打开以供读取
 	// 这对于无修改的 dump 很有帮助
-	cache        *simplelru.LRU[uint64, *SimpleMemoryIOToBytes]
+	cache        *simplelru.LRU[GridPos, *SimpleMemoryIOToBytes]
 	SharedBuffer *bytes.Buffer
 }
 
@@ -24,16 +24,16 @@ func (gio SimpleGridIO) TotalSize() (s int) {
 }
 
 func NewSimpleGridIO(compress Compressor, maxCaches int) *SimpleGridIO {
-	cache, _ := simplelru.NewLRU[uint64, *SimpleMemoryIOToBytes](maxCaches, func(key uint64, value *SimpleMemoryIOToBytes) {})
+	cache, _ := simplelru.NewLRU[GridPos, *SimpleMemoryIOToBytes](maxCaches, func(key GridPos, value *SimpleMemoryIOToBytes) {})
 	return &SimpleGridIO{
-		storage:      make(map[uint64][]byte),
+		storage:      make(map[GridPos][]byte),
 		compressor:   compress,
 		cache:        cache,
 		SharedBuffer: bytes.NewBuffer(nil),
 	}
 }
 
-func (gio SimpleGridIO) IterGrid(fn func(uint64) (next bool)) {
+func (gio SimpleGridIO) IterGrid(fn func(GridPos) (next bool)) {
 	for k := range gio.storage {
 		if !fn(k) {
 			return
@@ -41,7 +41,7 @@ func (gio SimpleGridIO) IterGrid(fn func(uint64) (next bool)) {
 	}
 }
 
-func (gio SimpleGridIO) DataWriter(key uint64) SubChunkDataWriteCloser {
+func (gio SimpleGridIO) DataWriter(key GridPos) SubChunkDataWriteCloser {
 	if gio.writing {
 		panic("reopen writer on write")
 	}
@@ -67,7 +67,7 @@ func (gio SimpleGridIO) DataWriter(key uint64) SubChunkDataWriteCloser {
 	return w
 }
 
-func (gio SimpleGridIO) DropGrid(key uint64) {
+func (gio SimpleGridIO) DropGrid(key GridPos) {
 	if gio.writing {
 		panic("drop on write")
 	}
@@ -75,7 +75,7 @@ func (gio SimpleGridIO) DropGrid(key uint64) {
 	gio.cache.Remove(key)
 }
 
-func (gio SimpleGridIO) DataReader(key uint64) SubChunkDataReadCloser {
+func (gio SimpleGridIO) DataReader(key GridPos) SubChunkDataReadCloser {
 	if gio.writing {
 		panic("open reader on write")
 	}
