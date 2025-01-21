@@ -1,14 +1,17 @@
-package subchunk_storage
+package enhance
 
 import (
 	"celler"
+	"celler/layer_storage"
 	"celler/subchunk"
+	"celler/subchunk_storage"
+	"fmt"
 	"math/rand"
 	"testing"
 )
 
 func TestSyncer(t *testing.T) {
-	basic := NewSimple(uint32(100), uint32(200), subchunk.MakeStandardVersioned)
+	basic := subchunk_storage.NewSimple(uint32(100), uint32(200), subchunk.MakeStandardVersioned)
 	s := MakeBiDirSyncer[celler.SubChunkDataChange[uint32, uint32]](basic)
 
 	for p, s := range s.IterSubChunks {
@@ -44,13 +47,13 @@ func TestSyncer(t *testing.T) {
 		t.Errorf("should get 1 but nothing")
 	}
 
-	basic2 := NewSimple(uint32(100), uint32(200), subchunk.MakeStandardVersioned)
+	basic2 := subchunk_storage.NewSimple(uint32(100), uint32(200), subchunk.MakeStandardVersioned)
 	d := MakeBiDirSyncer[celler.SubChunkDataChange[uint32, uint32]](basic2)
 	currentV := d.GetVersion(tp)
 	if currentV != 0 {
 		t.Errorf("should get nothing but: %v", s.Get(celler.SubChunkPos{}))
 	}
-	empty := NewSingle(uint32(100), uint32(200), subchunk.MakeStandardSimple)
+	empty := subchunk_storage.NewSingle(uint32(100), uint32(200), subchunk.MakeStandardSimple)
 	change := empty.QueryChange(tp, currentV)
 	d.ApplyChange(tp, change)
 	if currentV != 0 {
@@ -82,4 +85,32 @@ func TestSyncer(t *testing.T) {
 	if d.Get(tp) != nil {
 		t.Errorf("should get nothing but: %v", s.Get(celler.SubChunkPos{}))
 	}
+}
+
+func MakeRandomVersionedSubChunk[BlockIDT, AttachT ~uint32](r *rand.Rand) *subchunk.Versioned[BlockIDT, AttachT,
+	*layer_storage.Palette[BlockIDT],
+	*layer_storage.Palette[AttachT],
+	*layer_storage.Map[celler.SNBT],
+] {
+
+	c := subchunk.MakeStandardVersioned[BlockIDT, AttachT](100, 200)
+	for x := 0; x < 16; x++ {
+		for y := 0; y < 16; y++ {
+			for z := 0; z < 16; z++ {
+				bockID := BlockIDT(r.Int()) % 8
+				attach := AttachT(r.Int()) % 4
+				snbt := celler.SNBT("")
+				if r.Int()%256 == 0 {
+					snbt = celler.SNBT(fmt.Sprintf("%v", r.Int()))
+				}
+				c.ChangeBlock((celler.SubChunkBlockDelta[BlockIDT, AttachT]{}).
+					SetPos(celler.ToSubChunkBlockPos(x, y, z)).
+					SetID(bockID).
+					SetAttach(attach).
+					SetSNBT(snbt),
+				)
+			}
+		}
+	}
+	return c
 }

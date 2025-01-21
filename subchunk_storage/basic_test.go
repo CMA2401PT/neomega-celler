@@ -16,7 +16,6 @@ func MakeRandomVersionedSubChunk[BlockIDT, AttachT ~uint32](r *rand.Rand) *subch
 	*layer_storage.Palette[AttachT],
 	*layer_storage.Map[celler.SNBT],
 ] {
-
 	c := subchunk.MakeStandardVersioned[BlockIDT, AttachT](100, 200)
 	for x := 0; x < 16; x++ {
 		for y := 0; y < 16; y++ {

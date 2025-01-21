@@ -48,14 +48,13 @@ func NewIOGrid[Data any, DataPtr BasicSubchunk[Data]](
 	return s
 }
 
-func (s *IOGrid[Data, DataPtr]) InsightFn() func(celler.SubChunkPos) (hash uint64) {
-	// Y|X|Z
-	return func(pos celler.SubChunkPos) (hash uint64) {
-		X := uint32(pos.X) >> s.GridXLevel // (32 - s.GridXLevel)
-		Z := uint32(pos.Z) >> s.GridZLevel // (32 - s.GridZLevel)
-		hash = uint64(Z) | (uint64(X) << (32 - s.GridZLevel)) | (uint64(pos.Y) << (64 - s.GridZLevel - s.GridXLevel))
-		return hash
-	}
+func (s *IOGrid[Data, DataPtr]) InsightFn(pos celler.SubChunkPos) (hash uint64) {
+	// X|Z|Y
+	X := uint32(pos.X) >> s.GridXLevel       // 29
+	Z := uint32(pos.Z) >> s.GridZLevel       // 29
+	Y := uint32(pos.Y) >> s.GridYLevel & 0xF // 6
+	hash = uint64(Y) | (uint64(X) << 6) | (uint64(Z) << 35)
+	return hash
 }
 
 func (s *IOGrid[Data, DataPtr]) tearPos(pos celler.SubChunkPos) (low_io.GridPos, celler.SubChunkPos) {

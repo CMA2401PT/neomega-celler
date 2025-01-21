@@ -24,7 +24,7 @@ func (gio SimpleGridIO) TotalSize() (s int) {
 }
 
 func NewSimpleGridIO(compress Compressor, maxCaches int) *SimpleGridIO {
-	cache, _ := simplelru.NewLRU[GridPos, *SimpleMemoryIOToBytes](maxCaches, func(key GridPos, value *SimpleMemoryIOToBytes) {})
+	cache, _ := simplelru.NewLRU(maxCaches, func(key GridPos, value *SimpleMemoryIOToBytes) {})
 	return &SimpleGridIO{
 		storage:      make(map[GridPos][]byte),
 		compressor:   compress,

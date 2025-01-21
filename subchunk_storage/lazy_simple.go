@@ -60,10 +60,6 @@ func (s *LazySimple[Data, DataPtr]) DumpData(writer low_io.SubChunkDataWriteClos
 	}
 }
 
-func (s *LazySimple[Data, DataPtr]) InsightFn() func(celler.SubChunkPos) (hash uint64) {
-	return nil
-}
-
 func (s *LazySimple[Data, DataPtr]) loadSubchunk(p celler.SubChunkPos) DataPtr {
 	d := s.NewEmpty()
 	rd := s.LazyReader.GetReader(p)

@@ -5,14 +5,11 @@ type SubChunkStorageRead[Data any] interface {
 }
 
 type SubChunkStorageRandomRead[Data any] interface {
-	InsightFn() func(SubChunkPos) (hash uint64)
 	Get(SubChunkPos) Data
 	GetVersion(SubChunkPos) ChunkVersion
 }
 
 type SubChunkStorageRandomWrite[Data any] interface {
-	// 用于探测底层存储结构特性
-	InsightFn() func(SubChunkPos) (hash uint64)
 	Set(SubChunkPos, Data)
 	Drop(SubChunkPos)
 }
@@ -22,6 +19,14 @@ type SubChunkStorage[Data any] interface {
 	SubChunkStorageRandomRead[Data]
 	SubChunkStorageRandomWrite[Data]
 	GetOrCreate(SubChunkPos) Data
+}
+
+type SubChunkBatchOperator[Data any] interface {
+	BatchGet([]SubChunkPos) []struct {
+		Pos  SubChunkPos
+		Data Data
+	}
+	BatchSet(map[SubChunkPos]Data)
 }
 
 type SubChunkChange[Change any] struct {

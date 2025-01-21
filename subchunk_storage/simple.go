@@ -30,10 +30,6 @@ func (s *Simple[Data, DataPtr]) IsEmpty() bool {
 	return len(s.Data) == 0
 }
 
-func (s *Simple[Data, DataPtr]) InsightFn() func(celler.SubChunkPos) (hash uint64) {
-	return nil
-}
-
 func (s *Simple[Data, DataPtr]) IterSubChunks(cb func(celler.SubChunkPos, DataPtr) (next bool)) {
 	if s == nil || s.Data == nil {
 		return
