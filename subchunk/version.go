@@ -2,7 +2,6 @@ package subchunk
 
 import (
 	"celler"
-	"fmt"
 	"io"
 )
 
@@ -25,54 +24,79 @@ type Versioned[
 	},
 ] struct {
 	Simple[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]
-	versionData []celler.SubChunkBlockDeltaWithVersion[BlockIDT, AttachT]
+	versionData []celler.VersionedBlockChange[BlockIDT, AttachT]
 }
 
-func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) QueryChange(cacheVersion celler.ChunkVersion) celler.SubChunkDataChange[BlockIDT, AttachT] {
+func (sc *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) Version() celler.ChunkVersion {
+	if sc == nil {
+		return 0
+	}
+	return sc.Simple.CurrentVersion
+}
+
+func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) QueryChange(cacheVersion celler.ChunkVersion) celler.SubChunkChange[BlockIDT, AttachT] {
+	if vs == nil {
+		return celler.SubChunkChange[BlockIDT, AttachT]{
+			Valid: cacheVersion == 0,
+			Drop:  true,
+		}
+	}
+	if cacheVersion == vs.CurrentVersion {
+		// no change
+		return celler.SubChunkChange[BlockIDT, AttachT]{
+			Valid: true,
+		}
+	}
 	if cacheVersion >= vs.CurrentVersion {
 		// no change
-		return celler.SubChunkDataChange[BlockIDT, AttachT]{}
+		return celler.SubChunkChange[BlockIDT, AttachT]{}
 	}
-	if cacheVersion > 0 && cacheVersion >= vs.versionData[0].BeforeVersion {
-		deltas := []celler.SubChunkBlockDeltaWithVersion[BlockIDT, AttachT]{}
+	if cacheVersion > 0 && len(vs.versionData) > 0 && cacheVersion >= vs.versionData[0].BeforeVersion {
+		deltas := []celler.VersionedBlockChange[BlockIDT, AttachT]{}
 		for _, d := range vs.versionData {
 			if d.BeforeVersion >= cacheVersion {
 				deltas = append(deltas, d)
 			}
 		}
-		return celler.SubChunkDataChange[BlockIDT, AttachT]{
-			BlockDeltas: deltas,
+		return celler.SubChunkChange[BlockIDT, AttachT]{
+			BlockChanges: deltas,
 		}
 	}
-	return celler.SubChunkDataChange[BlockIDT, AttachT]{
+	return celler.SubChunkChange[BlockIDT, AttachT]{
 		Base: &vs.Simple,
 	}
 }
 
-func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) appendChange(beforeVersion celler.ChunkVersion, delta celler.SubChunkBlockDelta[BlockIDT, AttachT]) {
-	vs.versionData = append(vs.versionData, celler.SubChunkBlockDeltaWithVersion[BlockIDT, AttachT]{
-		SubChunkBlockDelta: delta,
-		BeforeVersion:      beforeVersion,
-		AfterVersion:       vs.CurrentVersion,
+func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) appendChange(beforeVersion celler.ChunkVersion, delta celler.BlockChange[BlockIDT, AttachT]) {
+	vs.versionData = append(vs.versionData, celler.VersionedBlockChange[BlockIDT, AttachT]{
+		BlockChange:   delta,
+		BeforeVersion: beforeVersion,
+		AfterVersion:  vs.CurrentVersion,
 	})
 	if len(vs.versionData) > 256 {
 		vs.versionData = vs.versionData[128:]
 	}
 }
 
-func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) ChangeBlock(delta celler.SubChunkBlockDelta[BlockIDT, AttachT]) {
+func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) ChangeBlock(delta celler.BlockChange[BlockIDT, AttachT]) {
 	beforeVersion := vs.CurrentVersion
 	vs.Simple.ChangeBlock(delta)
 	vs.appendChange(beforeVersion, delta)
 }
 
-func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) ChangeBlockWithVersion(delta celler.SubChunkBlockDelta[BlockIDT, AttachT], newVersion celler.ChunkVersion) {
+func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) ChangeBlockWithVersion(delta celler.BlockChange[BlockIDT, AttachT], newVersion celler.ChunkVersion) {
 	beforeVersion := vs.CurrentVersion
 	vs.Simple.ChangeBlockWithVersion(delta, newVersion)
 	vs.appendChange(beforeVersion, delta)
 }
 
-func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) ApplyChange(change celler.SubChunkDataChange[BlockIDT, AttachT]) {
+func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT]) ApplyChange(change celler.SubChunkChange[BlockIDT, AttachT]) {
+	if change.Valid {
+		return
+	}
+	if change.Drop {
+		panic("drop must be handled by subchunk holder, not subchunk itself")
+	}
 	if change.Base != nil {
 		if change.Base.Version() > vs.CurrentVersion {
 			vs.CurrentVersion = change.Base.Version()
@@ -83,21 +107,21 @@ func (vs *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorag
 			vs.BlockIDStorage.CopyFrom(change.Base.BlockID())
 			vs.BlockAttachStorage.CopyFrom(change.Base.BlockAttach())
 			vs.BlockSNBTStorage.CopyFrom(change.Base.BlockSNBT())
-			vs.versionData = make([]celler.SubChunkBlockDeltaWithVersion[BlockIDT, AttachT], 0)
+			vs.versionData = make([]celler.VersionedBlockChange[BlockIDT, AttachT], 0)
 		}
 	}
-	if len(change.BlockDeltas) > 0 {
-		for _, delta := range change.BlockDeltas {
+	if len(change.BlockChanges) > 0 {
+		for _, delta := range change.BlockChanges {
 			if delta.BeforeVersion < vs.CurrentVersion {
 				continue
 			}
-			vs.ChangeBlockWithVersion(delta.SubChunkBlockDelta, delta.AfterVersion)
+			vs.ChangeBlockWithVersion(delta.BlockChange, delta.AfterVersion)
 		}
 	}
 }
 
 type changeStoreT[BlockIDT ~uint32, AttachT ~uint32] struct {
-	celler.SubChunkBlockDeltaNoSNBT[BlockIDT, AttachT]
+	celler.BlockChange[BlockIDT, AttachT]
 	BeforeVersion celler.ChunkVersion
 	AfterVersion  celler.ChunkVersion
 }
@@ -161,9 +185,6 @@ func MakeVersionedSubChunk[
 	BlockAttachStorage AttachStorageT,
 	BlockSNBTStorage SNBTStorageT,
 ) *Versioned[BlockIDT, AttachT, BlockStorageT, AttachStorageT, SNBTStorageT] {
-	if CurrentVersion == 0 {
-		panic(fmt.Errorf("version cannot be 0"))
-	}
 	if MetaData == nil {
 		MetaData = make(map[string]string)
 	}
@@ -175,6 +196,6 @@ func MakeVersionedSubChunk[
 			BlockAttachStorage: BlockAttachStorage,
 			BlockSNBTStorage:   BlockSNBTStorage,
 		},
-		versionData: make([]celler.SubChunkBlockDeltaWithVersion[BlockIDT, AttachT], 0),
+		versionData: make([]celler.VersionedBlockChange[BlockIDT, AttachT], 0),
 	}
 }

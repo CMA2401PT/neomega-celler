@@ -3,7 +3,12 @@ package subchunk
 import (
 	"celler"
 	"celler/layer_storage"
+	"math/rand"
 )
+
+func RandomInitVersion() celler.ChunkVersion {
+	return celler.ChunkVersion(rand.Int31() >> 1)
+}
 
 func MakeStandardSimple[BlockIDT ~uint32, AttachT ~uint32](blockID BlockIDT, attach AttachT) *Simple[BlockIDT, AttachT,
 	*layer_storage.Palette[BlockIDT],
@@ -34,7 +39,7 @@ func MakeStandardVersioned[BlockIDT ~uint32, AttachT ~uint32](blockID BlockIDT, 
 		*layer_storage.Map[celler.SNBT],
 	]{
 		Simple:      *MakeStandardSimple(blockID, attach),
-		versionData: make([]celler.SubChunkBlockDeltaWithVersion[BlockIDT, AttachT], 0),
+		versionData: make([]celler.VersionedBlockChange[BlockIDT, AttachT], 0),
 	}
 }
 
@@ -54,7 +59,7 @@ func StandardVersionedFactory[BlockIDT ~uint32, AttachT ~uint32](blockID BlockID
 			*layer_storage.Map[celler.SNBT],
 		]{
 			Simple:      *MakeStandardSimple(blockID, attach),
-			versionData: make([]celler.SubChunkBlockDeltaWithVersion[BlockIDT, AttachT], 0),
+			versionData: make([]celler.VersionedBlockChange[BlockIDT, AttachT], 0),
 		}
 	}
 

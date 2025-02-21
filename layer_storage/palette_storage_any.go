@@ -20,6 +20,32 @@ type Palette[T storage_io.Number | ~string] struct {
 	LastVisitPaletteValue T
 }
 
+func ConvertPalette[SRC, DST storage_io.Number | ~string](
+	src *Palette[SRC],
+	cvt func(src SRC) DST,
+) *Palette[DST] {
+	if src == nil {
+		return nil
+	}
+	dst := &Palette[DST]{
+		Data:                  src.Data,
+		Level:                 src.Level,
+		IdxsPerUint32:         src.IdxsPerUint32,
+		Mask:                  src.Mask,
+		LastPaletteIdx:        src.LastPaletteIdx,
+		LastVisitPaletteIdx:   src.LastVisitPaletteIdx,
+		LastVisitPaletteValue: cvt(src.LastVisitPaletteValue),
+	}
+	dst.Palette = make([]DST, len(src.Palette))
+	for i, v := range src.Palette {
+		dst.Palette[i] = cvt(v)
+		if i > int(src.LastPaletteIdx) {
+			break
+		}
+	}
+	return dst
+}
+
 func (Palette[T]) Make() *Palette[T] {
 	return &Palette[T]{}
 }
@@ -63,6 +89,27 @@ func (s *Palette[T]) appendPalette(b T) {
 	s.Palette[idx] = b
 }
 
+func (s *Palette[T]) SetPalette(palette []T) {
+	if len(palette) > len(s.Palette) {
+		panic("palette size not fit")
+	}
+	for i, p := range palette {
+		s.Palette[i] = p
+		s.LastVisitPaletteIdx = uint32(i)
+		s.LastVisitPaletteValue = p
+		s.LastPaletteIdx = uint32(i)
+	}
+}
+
+func (s *Palette[T]) GetUsedPalette() []T {
+	used := s.LastPaletteIdx + 1
+	out := make([]T, used)
+	for i := 0; i < int(used); i++ {
+		out[i] = s.Palette[i]
+	}
+	return out
+}
+
 func (s *Palette[T]) posToIdx(pos celler.SubChunkBlockPos) int {
 	return (int(pos.X&0xf) << 8) | (int(pos.Z&0xf) << 4) | int(pos.Y&0xf)
 }
@@ -95,10 +142,10 @@ func (s *Palette[T]) Default() T {
 }
 
 func (s *Palette[T]) InitWithDefault(data T) {
-	s.fill(0, data)
+	s.Fill(0, data)
 }
 
-func (s *Palette[T]) fill(level int, fill T) {
+func (s *Palette[T]) Fill(level int, fill T) {
 	var wordByteSize = 4
 	var wordBitSize = wordByteSize * 8
 	var storageSize = 4096
@@ -131,7 +178,7 @@ func (s *Palette[T]) Set(pos celler.SubChunkBlockPos, b T) {
 		idx = int(s.LastPaletteIdx) + 1
 		if idx == (1 << s.Level) {
 			newBS := (&Palette[T]{})
-			newBS.fill(int(s.Level)+1, s.Palette[0])
+			newBS.Fill(int(s.Level)+1, s.Palette[0])
 			copy(newBS.Palette, s.Palette)
 			for i := 0; i < 4096; i++ {
 				newBS.setPaletteIndexByBlockIdx(i, uint32(s.getPaletteIndexByBlockIdx(i)))
@@ -211,6 +258,10 @@ func MakePaletteStorage[T storage_io.Number | ~string](defaultV T) *Palette[T] {
 }
 
 func (s *Palette[T]) Dump(w io.Writer) {
+	if s == nil {
+		storage_io.WriteValue(w, uint32(0))
+		return
+	}
 	head := []uint32{s.Level, s.IdxsPerUint32, s.Mask, s.LastPaletteIdx, s.LastVisitPaletteIdx}
 	pb := bytes.NewBuffer(nil)
 	storage_io.WriteArrayWithoutCount(pb, append([]T{s.LastVisitPaletteValue}, s.Palette...))
@@ -249,5 +300,4 @@ func (s *Palette[B]) Load(r io.Reader) {
 	} else {
 		s.Data = make([]uint32, 0)
 	}
-
 }

@@ -8,23 +8,6 @@ import (
 )
 
 func TestSimpleSubChunk(t *testing.T) {
-	chunk := MakeSubChunk(
-		0, nil,
-		layer_storage.New(uint32(0)).Palette(),
-		layer_storage.New(uint32(0)).Palette(),
-		layer_storage.New(celler.SNBT("")).Map(),
-	)
-	// chunk := &SimpleSubChunkData[uint32, uint32, *layer_storage.Palette[uint32], *layer_storage.Palette[uint32], *layer_storage.Palette[celler.SNBT]]{}
-	func(celler.SubChunkRead[uint32, uint32]) {}(chunk)
-
-	Versionchunk := &Versioned[
-		uint32, uint32,
-		*layer_storage.Palette[uint32],
-		*layer_storage.Palette[uint32],
-		*layer_storage.Palette[celler.SNBT],
-	]{}
-	func(celler.SubChunkRead[uint32, uint32]) {}(Versionchunk)
-
 	o := MakeVersionedSubChunk(
 		1, nil,
 		layer_storage.MakePaletteStorage(uint32(100)),
@@ -35,7 +18,7 @@ func TestSimpleSubChunk(t *testing.T) {
 	for x := 0; x < 16; x++ {
 		for y := 0; y < 16; y++ {
 			for z := 0; z < 16; z++ {
-				o.ChangeBlock(celler.SubChunkBlockDelta[uint32, uint32]{}.
+				o.ChangeBlock(celler.BlockChange[uint32, uint32]{}.
 					SetPos(celler.ToSubChunkBlockPos(x, y, z)).
 					SetID(200),
 				)
@@ -53,7 +36,7 @@ func TestSimpleSubChunk(t *testing.T) {
 				} else {
 					v = uint32(x*100 + y*10 + 2*z)
 				}
-				o.ChangeBlock(celler.SubChunkBlockDelta[uint32, uint32]{}.
+				o.ChangeBlock(celler.BlockChange[uint32, uint32]{}.
 					SetPos(celler.ToSubChunkBlockPos(x, y, z)).
 					SetID(v),
 				)
@@ -130,7 +113,7 @@ func TestSimpleSubChunk(t *testing.T) {
 					v = uint32(x*200 + y*20 + 4*z)
 				}
 				if count > startCount && count < endCount {
-					c.ChangeBlock(celler.SubChunkBlockDelta[uint32, uint32]{}.
+					c.ChangeBlock(celler.BlockChange[uint32, uint32]{}.
 						SetPos(celler.ToSubChunkBlockPos(x, y, z)).
 						SetID(v),
 					)
