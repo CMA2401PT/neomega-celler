@@ -11,13 +11,21 @@ import (
 	"github.com/hashicorp/golang-lru/v2/simplelru"
 )
 
-type JavaStorageReadOnly struct {
-	cache simplelru.LRUCache[celler.ChunkPos, map[celler.ChunkUnit]*subchunk.Simple[
+type ChunkWithChangeMark struct {
+	Subchunks map[celler.ChunkUnit]*subchunk.Simple[
 		neomega_blocks.UIBI, uint32,
 		*layer_storage.Palette[neomega_blocks.UIBI],
 		*layer_storage.PlaceHolder[uint32],
 		*layer_storage.Map[celler.SNBT],
-	]]
+	]
+	Changed bool
+}
+
+type JavaStorageReadOnly struct {
+	cache simplelru.LRUCache[
+		celler.ChunkPos,
+		*ChunkWithChangeMark,
+	]
 	rodb mca.ReadOnlyMCAChunkKV
 	mu   sync.RWMutex
 }
@@ -25,13 +33,7 @@ type JavaStorageReadOnly struct {
 func NewReadOnlyJavaStorage(
 	rodb mca.ReadOnlyMCAChunkKV,
 ) *JavaStorageReadOnly {
-	cache, _ := simplelru.NewLRU(64, func(celler.ChunkPos, map[celler.ChunkUnit]*subchunk.Simple[
-		neomega_blocks.UIBI, uint32,
-		*layer_storage.Palette[neomega_blocks.UIBI],
-		*layer_storage.PlaceHolder[uint32],
-		*layer_storage.Map[celler.SNBT],
-	]) {
-	})
+	cache, _ := simplelru.NewLRU(64, func(celler.ChunkPos, *ChunkWithChangeMark) {})
 	return &JavaStorageReadOnly{
 		cache: cache,
 		rodb:  rodb,
@@ -61,7 +63,24 @@ func (s *JavaStorageReadOnly) Get(position celler.SubChunkPos) *subchunk.Simple[
 	if chunk == nil {
 		return nil
 	}
-	return chunk[position.Y]
+	return chunk.Subchunks[position.Y]
+}
+
+func (s *JavaStorageReadOnly) Close() error {
+	return nil
+}
+
+func (s *JavaStorageReadOnly) IterAll(cb func(celler.SubChunkPos) (next bool)) {
+	for chunkPos := range s.rodb.IterAll {
+		for y := celler.ChunkUnit(-4); y < celler.ChunkUnit(20); y++ {
+			if !cb(celler.SubChunkPos{
+				ChunkPos: chunkPos,
+				Y:        y,
+			}) {
+				return
+			}
+		}
+	}
 }
 
 func (s *JavaStorageReadOnly) QueryChange(position celler.SubChunkPos, version celler.ChunkVersion) celler.SubChunkChange[neomega_blocks.UIBI, uint32] {

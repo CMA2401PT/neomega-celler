@@ -8,6 +8,8 @@ import (
 	"github.com/hashicorp/golang-lru/v2/simplelru"
 )
 
+var _ ReadOnlyMCAChunkKV = &MCARoKV{}
+
 type MCARoKV struct {
 	RoStor      ReadOnlyStor
 	regionCache *simplelru.LRU[RegionPos, *RoRegion]
@@ -42,14 +44,17 @@ func (db *MCARoKV) getRegion(rp RegionPos) (r *RoRegion) {
 	if err != nil {
 		return
 	}
-	rg, err := newRoRegion(rd)
+	r, err = newRoRegion(rd)
 	if err != nil {
 		return
 	}
-	return rg
+	return r
 }
 
 func (db *MCARoKV) Close() error {
+	for _, rg := range db.regionCache.Values() {
+		rg.Close()
+	}
 	return db.RoStor.Close()
 }
 

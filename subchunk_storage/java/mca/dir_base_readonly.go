@@ -4,13 +4,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
+var _ ReadOnlyStor = &dirBaseRoStor{}
+
+type WF struct {
+	*os.File
+	onClose func()
+}
+
 type dirBaseRoStor struct {
-	dir string
+	dir     string
+	fhCache map[RegionPos]*WF
+	mu      sync.RWMutex
 }
 
 func (s *dirBaseRoStor) Close() error {
+	for _, w := range s.fhCache {
+		w.Close()
+	}
 	return nil
 }
 
@@ -35,9 +48,22 @@ func (s *dirBaseRoStor) IterRegions(cb func(RegionPos) (next bool)) {
 }
 
 func (s *dirBaseRoStor) OpenRegion(rp RegionPos) (Reader, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if w, ok := s.fhCache[rp]; ok {
+		return w.File, nil
+	}
 	baseName := RegionPosToFileName(rp)
 	fullName := filepath.Join(s.dir, baseName)
 	fp, err := os.OpenFile(fullName, os.O_RDONLY, 0755)
+	s.fhCache[rp] = &WF{
+		File: fp,
+		onClose: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			delete(s.fhCache, rp)
+		},
+	}
 	return fp, err
 }
 
@@ -50,6 +76,8 @@ func OpenDirReadOnly(dir string) (ReadOnlyStor, error) {
 		}
 	}
 	return &dirBaseRoStor{
-		dir: dir,
+		dir:     dir,
+		fhCache: map[RegionPos]*WF{},
+		mu:      sync.RWMutex{},
 	}, nil
 }

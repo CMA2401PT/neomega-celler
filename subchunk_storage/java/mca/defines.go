@@ -55,3 +55,8 @@ type ReadOnlyMCAChunkKV interface {
 	IterAll(interFn func(celler.ChunkPos) (continueIter bool))
 	Close() error
 }
+
+type ReadWriteMCAChunkKV interface {
+	ReadOnlyMCAChunkKV
+	Put(celler.ChunkPos, []byte) error
+}

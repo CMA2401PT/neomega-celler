@@ -19,12 +19,7 @@ type ChunkDecoder struct{}
 
 var cd = ChunkDecoder{}
 
-func (cd *ChunkDecoder) DecodeChunkFromData(data []byte) (map[celler.ChunkUnit]*subchunk.Simple[
-	neomega_blocks.UIBI, uint32,
-	*layer_storage.Palette[neomega_blocks.UIBI],
-	*layer_storage.PlaceHolder[uint32],
-	*layer_storage.Map[celler.SNBT],
-], error) {
+func (cd *ChunkDecoder) DecodeChunkFromData(data []byte) (*ChunkWithChangeMark, error) {
 
 	_, chunkNBTI, err := neomega_nbt.NBTDecode[encoding.BigEndian](data)
 	if err != nil {
@@ -50,21 +45,19 @@ func (cd *ChunkDecoder) DecodeChunkFromData(data []byte) (map[celler.ChunkUnit]*
 	return nil, fmt.Errorf("unrecognized section structure")
 }
 
-func (cd *ChunkDecoder) decodeChunkFromSections(sectionsI any, snbts map[celler.ChunkBlockPos]celler.SNBT) (out map[celler.ChunkUnit]*subchunk.Simple[
-	neomega_blocks.UIBI, uint32,
-	*layer_storage.Palette[neomega_blocks.UIBI],
-	*layer_storage.PlaceHolder[uint32],
-	*layer_storage.Map[celler.SNBT],
-], err error) {
+func (cd *ChunkDecoder) decodeChunkFromSections(sectionsI any, snbts map[celler.ChunkBlockPos]celler.SNBT) (out *ChunkWithChangeMark, err error) {
 	errStr := ""
-	out = make(map[celler.ChunkUnit]*subchunk.Simple[neomega_blocks.UIBI, uint32, *layer_storage.Palette[neomega_blocks.UIBI], *layer_storage.PlaceHolder[uint32], *layer_storage.Map[celler.SNBT]])
+	out = &ChunkWithChangeMark{
+		Subchunks: make(map[celler.ChunkUnit]*subchunk.Simple[neomega_blocks.UIBI, uint32, *layer_storage.Palette[neomega_blocks.UIBI], *layer_storage.PlaceHolder[uint32], *layer_storage.Map[celler.SNBT]]),
+		Changed:   false,
+	}
 	sections, ok := sectionsI.([]any)
 	if !ok {
 		panic("")
 	} else {
 		for _, sectionI := range sections {
 			y, c, err := cd.decodeSubChunkFromSection(sectionI)
-			out[y] = c
+			out.Subchunks[y] = c
 			if err != nil {
 				errStr += ";" + err.Error()
 			}
@@ -78,8 +71,10 @@ func (cd *ChunkDecoder) decodeChunkFromSections(sectionsI any, snbts map[celler.
 	}
 	for pos, snbt := range snbts {
 		cY := pos.Y >> 4
-		c := out[celler.ChunkUnit(cY)]
-		c.BlockSNBTStorage.Set(celler.ToSubChunkBlockPos(pos.X, pos.Y&0xf, pos.Z), snbt)
+		c := out.Subchunks[celler.ChunkUnit(cY)]
+		if c != nil {
+			c.BlockSNBTStorage.Set(celler.ToSubChunkBlockPos(pos.X, pos.Y&0xf, pos.Z), snbt)
+		}
 	}
 	return out, err
 }
