@@ -194,6 +194,10 @@ func (s *Palette[T]) Set(pos celler.SubChunkBlockPos, b T) {
 	s.setPaletteIndexByBlockIdx(s.posToIdx(pos), uint32(idx))
 }
 
+func (s *Palette[T]) SetIndex(pos celler.SubChunkBlockPos, idx int) {
+	s.setPaletteIndexByBlockIdx(s.posToIdx(pos), uint32(idx))
+}
+
 func (s *Palette[T]) Same() (d T, allSame bool) {
 	if s.Level == 0 {
 		return s.LastVisitPaletteValue, true
