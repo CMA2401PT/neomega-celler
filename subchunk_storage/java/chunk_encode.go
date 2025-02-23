@@ -102,6 +102,9 @@ func (ChunkEncoder) EncodeBlockStates(p *layer_storage.Palette[neomega_blocks.UI
 	var set func(blockI int, v uint32)
 	{
 		bitsPerBlock := int(p.Level)
+		if bitsPerBlock <= 4 {
+			bitsPerBlock = 4
+		}
 		blocksPerLong := 64 / bitsPerBlock
 		totalLong := (4096 + blocksPerLong - 1) / blocksPerLong
 		blockData = make([]int64, totalLong)

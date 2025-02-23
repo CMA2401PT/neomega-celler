@@ -83,6 +83,9 @@ func (rr *RoRegion) decodeSpace(space uint32) (sec, num uint32) {
 }
 
 func (rr *RoRegion) Close() error {
+	if rr == nil {
+		return nil
+	}
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
 	return rr.br.Close()
