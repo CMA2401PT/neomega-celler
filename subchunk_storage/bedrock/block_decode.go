@@ -56,7 +56,7 @@ func DefaultBlockDecode(rawNbt []byte) (id neomega_blocks.UIBI, err error) {
 	if err != nil {
 		return neomega_blocks.AIR, fmt.Errorf("fail to parse nbt block")
 	}
-	uniID, found := preset.BedrockPrimaryOrJavaToUIBI.BlockToBestID(blk, description.ScoreFnDefault)
+	uniID, found := preset.BedrockToUIBI.BlockToBestID(blk, description.ScoreFnDefault)
 	if !found {
 		return neomega_blocks.AIR, fmt.Errorf("cannot find uni id")
 	}
