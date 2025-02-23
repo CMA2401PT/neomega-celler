@@ -137,6 +137,21 @@ func (s *Palette[T]) IterNonDefault(fn func(celler.SubChunkBlockPos, T) (next bo
 	}
 }
 
+func (s *Palette[T]) IterNonDefaultPaletteI(fn func(celler.SubChunkBlockPos, int) (next bool)) {
+	if s.Level == 0 {
+		return
+	}
+	for i := 0; i < 4096; i++ {
+		pi := s.getPaletteIndexByBlockIdx(i)
+		if pi == 0 {
+			continue
+		}
+		if !fn(s.idxToPos(i), pi) {
+			return
+		}
+	}
+}
+
 func (s *Palette[T]) Default() T {
 	return s.Palette[0]
 }

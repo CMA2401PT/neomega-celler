@@ -41,6 +41,45 @@ func NewReadOnlyJavaStorage(
 	}
 }
 
+func (s *JavaStorageReadOnly) loadChunk(position celler.ChunkPos) (chunk *ChunkWithChangeMark) {
+	var exist bool
+	chunk, exist = s.cache.Get(position)
+	if exist {
+		return chunk
+	}
+	defer func() {
+		s.cache.Add(position, chunk)
+	}()
+	data, _ := s.rodb.Get(position)
+	if len(data) == 0 {
+		return nil
+	}
+
+	chunk, _ = cd.DecodeChunkFromData(data)
+	return chunk
+}
+
+func (s *JavaStorageReadOnly) loadOrCreateChunk(position celler.ChunkPos) (chunk *ChunkWithChangeMark) {
+	var exist bool
+	chunk, exist = s.cache.Get(position)
+	if exist {
+		return chunk
+	}
+	defer func() {
+		s.cache.Add(position, chunk)
+	}()
+	data, _ := s.rodb.Get(position)
+	if len(data) == 0 {
+		chunk = &ChunkWithChangeMark{
+			Subchunks: map[celler.ChunkUnit]*subchunk.Simple[neomega_blocks.UIBI, uint32, *layer_storage.Palette[neomega_blocks.UIBI], *layer_storage.PlaceHolder[uint32], *layer_storage.Map[celler.SNBT]]{},
+			Changed:   true,
+		}
+		return chunk
+	}
+	chunk, _ = cd.DecodeChunkFromData(data)
+	return chunk
+}
+
 func (s *JavaStorageReadOnly) Get(position celler.SubChunkPos) *subchunk.Simple[
 	neomega_blocks.UIBI, uint32,
 	*layer_storage.Palette[neomega_blocks.UIBI],
@@ -49,17 +88,7 @@ func (s *JavaStorageReadOnly) Get(position celler.SubChunkPos) *subchunk.Simple[
 ] {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var exist bool
-	chunk, exist := s.cache.Get(position.ChunkPos)
-	if !exist {
-		data, _ := s.rodb.Get(position.ChunkPos)
-		if len(data) == 0 {
-			return nil
-		}
-
-		chunk, _ = cd.DecodeChunkFromData(data)
-		s.cache.Add(position.ChunkPos, chunk)
-	}
+	chunk := s.loadChunk(position.ChunkPos)
 	if chunk == nil {
 		return nil
 	}
