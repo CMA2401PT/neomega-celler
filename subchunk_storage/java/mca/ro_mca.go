@@ -2,7 +2,6 @@ package mca
 
 import (
 	"celler"
-	"fmt"
 	"sync"
 
 	"github.com/hashicorp/golang-lru/v2/simplelru"
@@ -39,7 +38,7 @@ func (db *MCARoKV) getRegion(rp RegionPos) (r *RoRegion) {
 	defer func() {
 		db.regionCache.Add(rp, r)
 	}()
-	fmt.Println("open region", rp)
+	// fmt.Println("open region", rp)
 	rd, err := db.RoStor.OpenRegion(rp)
 	if err != nil {
 		return
