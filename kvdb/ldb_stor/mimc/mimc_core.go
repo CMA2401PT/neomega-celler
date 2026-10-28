@@ -13,6 +13,7 @@ import (
 
 type MimcCore struct {
 	fp           *os.File
+	readOnly     bool
 	emptyCluster []byte
 	occupyTable  []byte
 	currsize     int64
@@ -22,7 +23,9 @@ type MimcCore struct {
 }
 
 func (fs *MimcCore) Close() {
-	fs.fp.Sync()
+	if !fs.readOnly {
+		fs.fp.Sync()
+	}
 	fs.fp.Close()
 }
 func (fs *MimcCore) shrink() {
@@ -129,6 +132,9 @@ func (fs *MimcCore) init() error {
 		}
 	}
 	if fs.CurrentSize() == 0 {
+		if fs.readOnly {
+			return fmt.Errorf("empty MIMC file")
+		}
 		ci, err := fs.extendCluster()
 		if err != nil {
 			return err
@@ -152,12 +158,11 @@ func (fs *MimcCore) init() error {
 		})
 	} else {
 		sz := make([]byte, 12)
-		fs.ReadSingleCluster(0, fs.ClusterSize/2, sz)
-		if string(sz[:4]) != "2401" {
-			panic("invalid file format")
+		if err := fs.ReadSingleCluster(0, fs.ClusterSize/2, sz); err != nil {
+			return err
 		}
-		if binary.LittleEndian.Uint64(sz[4:]) != uint64(fs.ClusterSize) {
-			panic("invalid file format")
+		if string(sz[:4]) != "2401" || binary.LittleEndian.Uint64(sz[4:]) != uint64(fs.ClusterSize) {
+			return fmt.Errorf("invalid MIMC file header")
 		}
 	}
 	// fmt.Println("current clusters:", fs.currentCluster())
@@ -403,11 +408,27 @@ func (fs *MimcCore) Remove(space *Space) {
 }
 
 func NewMimcCore(path string, clusterSize int64) (*MimcCore, error) {
-	fp, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0755)
+	return openMimcCore(path, clusterSize, false)
+}
+
+// NewReadOnlyMimcCore opens an existing file without creating or modifying it.
+func NewReadOnlyMimcCore(path string, clusterSize int64) (*MimcCore, error) {
+	return openMimcCore(path, clusterSize, true)
+}
+
+func openMimcCore(path string, clusterSize int64, readOnly bool) (*MimcCore, error) {
+	flags := os.O_CREATE | os.O_RDWR
+	if readOnly {
+		flags = os.O_RDONLY
+	}
+	fp, err := os.OpenFile(path, flags, 0644)
 	if err != nil {
 		return nil, err
 	}
-	mfs := &MimcCore{fp: fp, ClusterSize: clusterSize}
-	mfs.init()
+	mfs := &MimcCore{fp: fp, ClusterSize: clusterSize, readOnly: readOnly}
+	if err := mfs.init(); err != nil {
+		fp.Close()
+		return nil, err
+	}
 	return mfs, nil
 }

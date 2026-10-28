@@ -114,7 +114,13 @@ func Shrink(p string) error {
 }
 
 func OpenOrCreate(p string, readOnly bool) (*MimcStorage, error) {
-	mimcCore, err := mimc.NewMimcCore(p, 128*1024)
+	var mimcCore *mimc.MimcCore
+	var err error
+	if readOnly {
+		mimcCore, err = mimc.NewReadOnlyMimcCore(p, 128*1024)
+	} else {
+		mimcCore, err = mimc.NewMimcCore(p, 128*1024)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +148,7 @@ func OpenOrCreate(p string, readOnly bool) (*MimcStorage, error) {
 	}
 	err = ms.FileHeader.Load()
 	if err != nil {
+		mimcCore.Close()
 		return nil, err
 	}
 	return ms, nil

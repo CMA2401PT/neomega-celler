@@ -7,6 +7,7 @@ import (
 	"celler/kvdb/ldb_stor/ldb_stor_memory"
 	"celler/kvdb/ldb_stor/ldb_stor_mimc"
 
+	"path/filepath"
 	"strings"
 
 	"github.com/df-mc/goleveldb/leveldb"
@@ -63,7 +64,7 @@ func NewReadOnlyLevelDB(path string) (ReadOnlyKVDB, error) {
 		return simplifiedLDB{db}, err
 
 	}
-	if strings.HasSuffix(path, ".nomg") {
+	if isMimcPath(path) {
 		s, err := ldb_stor_mimc.NewReadOnly(path)
 		if err != nil {
 			return nil, err
@@ -97,7 +98,7 @@ func NewReadWriteLevelDB(path string) (KVDB, error) {
 		return simplifiedLDB{db}, err
 
 	}
-	if strings.HasSuffix(path, ".nomg") {
+	if isMimcPath(path) {
 		s, err := ldb_stor_mimc.NewReadWrite(path)
 		if err != nil {
 			return nil, err
@@ -129,7 +130,7 @@ func NewReadWriteLevelDBWithFix(path string) (KVDB, error) {
 		return simplifiedLDB{db}, err
 
 	}
-	if strings.HasSuffix(path, ".nomg") {
+	if isMimcPath(path) {
 		s, err := ldb_stor_mimc.NewReadWrite(path)
 		if err != nil {
 			return nil, err
@@ -153,4 +154,10 @@ func NewReadWriteLevelDBWithFix(path string) (KVDB, error) {
 
 func ShrinkMimcLevelDB(path string) error {
 	return ldb_stor_mimc.Shrink(path)
+}
+
+// Both names have been used for the same single-file LevelDB container.
+func isMimcPath(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".mimc" || ext == ".nomg"
 }
