@@ -5,17 +5,22 @@ import (
 	"celler/layer_storage"
 	"celler/subchunk"
 	"celler/subchunk_storage/java/mca"
-	"neomega_blocks"
 
 	"github.com/hashicorp/golang-lru/v2/simplelru"
 )
 
 type JavaStorageReadWrite struct {
 	*JavaStorageReadOnly
-	rwdb mca.ReadWriteMCAChunkKV
+	rwdb     mca.ReadWriteMCAChunkKV
+	writeErr error
 }
 
 func (s *JavaStorageReadWrite) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.writeErr != nil {
+		return s.writeErr
+	}
 	ks := s.cache.Keys()
 	for _, p := range ks {
 		c, _ := s.cache.Get(p)
@@ -26,7 +31,10 @@ func (s *JavaStorageReadWrite) Close() error {
 			continue
 		}
 		data := chunkEncode.EncodeChunk(p, c)
-		s.rwdb.Put(p, data)
+		if err := s.rwdb.Put(p, data); err != nil {
+			return err
+		}
+		c.Changed = false
 	}
 	return nil
 }
@@ -40,8 +48,8 @@ func (s *JavaStorageReadWrite) Drop(position celler.SubChunkPos) {
 }
 
 func (s *JavaStorageReadWrite) Set(position celler.SubChunkPos, data *subchunk.Simple[
-	neomega_blocks.UIBI, uint32,
-	*layer_storage.Palette[neomega_blocks.UIBI],
+	uint32, uint32,
+	*layer_storage.Palette[uint32],
 	*layer_storage.PlaceHolder[uint32],
 	*layer_storage.Map[celler.SNBT],
 ]) {
@@ -59,20 +67,21 @@ func (s *JavaStorageReadWrite) Set(position celler.SubChunkPos, data *subchunk.S
 func NewReadWriteJavaStorage(
 	rwdb mca.ReadWriteMCAChunkKV,
 ) *JavaStorageReadWrite {
-	cache, _ := simplelru.NewLRU(64, func(cp celler.ChunkPos, c *ChunkWithChangeMark) {
-		if c == nil {
-			return
-		}
-		if !c.Changed {
-			return
-		}
-		data := chunkEncode.EncodeChunk(cp, c)
-		rwdb.Put(cp, data)
-	})
 	s := &JavaStorageReadWrite{
 		JavaStorageReadOnly: NewReadOnlyJavaStorage(rwdb),
 		rwdb:                rwdb,
 	}
+	cache, _ := simplelru.NewLRU(64, func(cp celler.ChunkPos, c *ChunkWithChangeMark) {
+		if c == nil || !c.Changed {
+			return
+		}
+		data := chunkEncode.EncodeChunk(cp, c)
+		if err := rwdb.Put(cp, data); err != nil {
+			if s.writeErr == nil {
+				s.writeErr = err
+			}
+		}
+	})
 	s.cache = cache
 	return s
 }

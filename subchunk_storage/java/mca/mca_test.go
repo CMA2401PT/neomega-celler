@@ -2,57 +2,73 @@ package mca
 
 import (
 	"bytes"
-	"fmt"
+	"celler"
 	"testing"
 )
 
 func TestMCA(t *testing.T) {
-	srcStor, err := OpenDirReadOnly("../data/region")
+	dir := t.TempDir()
+	values := map[celler.ChunkPos][]byte{
+		{X: 1, Z: 3}:   bytes.Repeat([]byte("first"), 1700),
+		{X: -2, Z: 35}: []byte("negative coordinate"),
+	}
+	db, err := NewReadWriteMCAKvFromDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	dstStor, err := OpenDirReadWrite("../cpy/region")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dstKV := NewReadWriteMCA(dstStor)
-
-	srcKV := NewReadOnlyMCA(srcStor)
-	// data, err := srcKV.Get(celler.ChunkPos{1, 1})
-	// fmt.Println(len(data), err)
-
-	for chunkPos := range srcKV.IterAll {
-		data, _ := srcKV.Get(chunkPos)
-		dstKV.Put(chunkPos, data)
-	}
-	dstKV.Close()
-
-	dstStor, err = OpenDirReadWrite("../cpy/region")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dstKV = NewReadWriteMCA(dstStor)
-	// data, err := srcKV.Get(celler.ChunkPos{1, 1})
-	// fmt.Println(len(data), err)
-
-	for chunkPos := range srcKV.IterAll {
-		fmt.Println(chunkPos)
-		data, _ := srcKV.Get(chunkPos)
-		dataBack, _ := dstKV.Get(chunkPos)
-		if !bytes.Equal(data, dataBack) {
-			t.Fatal("not same")
+	for pos, value := range values {
+		if err := db.Put(pos, value); err != nil {
+			t.Fatal(err)
 		}
 	}
-	dstKV.Close()
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ro, err := NewReadOnlyMCAKvFromDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	seen := map[celler.ChunkPos]bool{}
+	for pos := range ro.IterAll {
+		seen[pos] = true
+		value, err := ro.Get(pos)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(value, values[pos]) {
+			t.Fatalf("wrong data/coordinates at %v", pos)
+		}
+	}
+	if len(seen) != len(values) {
+		t.Fatalf("enumerated %d chunks, want %d", len(seen), len(values))
+	}
+	for pos := range values {
+		if !seen[pos] {
+			t.Fatalf("missing chunk %v", pos)
+		}
+	}
+}
 
-	// rd, err := stor.OpenRegion(regionPos{1, -2})
-	// fmt.Println(rd, err)
-	// rr, err := newRoRegion(rd)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-	// data, err := rr.GetChunkData(inRegionPos{Cx: 24, Cz: 10})
-	// fmt.Println(data, err)
-	// fmt.Println(rr)
+func TestMCAReopenEvictedRegion(t *testing.T) {
+	dir := t.TempDir()
+	db, err := NewReadWriteMCAKvFromDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// More than 16 regions exceeds the region cache capacity.
+	for i := 0; i < 18; i++ {
+		pos := celler.ChunkPos{X: celler.ChunkUnit(i * 32), Z: 3}
+		if err := db.Put(pos, []byte{byte(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 18; i++ {
+		pos := celler.ChunkPos{X: celler.ChunkUnit(i * 32), Z: 3}
+		value, err := db.Get(pos)
+		if err != nil || !bytes.Equal(value, []byte{byte(i)}) {
+			t.Fatalf("region %d after eviction: %v, %v", i, value, err)
+		}
+	}
 }

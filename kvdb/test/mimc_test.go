@@ -4,15 +4,21 @@ import (
 	"bytes"
 	"celler/kvdb"
 	"fmt"
-	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestMimc(t *testing.T) {
+	dir := t.TempDir()
 	// cpy stage
-	srcDB, err := kvdb.NewReadWriteLevelDB("./newUTB")
+	srcDB, err := kvdb.NewReadWriteLevelDB(filepath.Join(dir, "newUTB"))
 	if err != nil {
 		panic(err)
+	}
+	for i := 0; i < 20; i++ {
+		if err := srcDB.Put([]byte(fmt.Sprintf("key-%d", i)), bytes.Repeat([]byte{byte(i)}, 100+i)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	datas := map[string][]byte{}
 	for kv := range srcDB.IterAll {
@@ -20,8 +26,7 @@ func TestMimc(t *testing.T) {
 	}
 	srcDB.Close()
 
-	os.Remove("utb.nomg")
-	dstDB, err := kvdb.NewReadWriteLevelDB("utb.nomg")
+	dstDB, err := kvdb.NewReadWriteLevelDB(filepath.Join(dir, "utb.nomg"))
 	if err != nil {
 		panic(err)
 	}
@@ -58,8 +63,8 @@ func TestMimc(t *testing.T) {
 	// dstDB.Close()
 
 	fmt.Println("shrinking")
-	kvdb.ShrinkMimcLevelDB("utb.nomg")
-	dstDB, err = kvdb.NewReadWriteLevelDB("utb.nomg")
+	kvdb.ShrinkMimcLevelDB(filepath.Join(dir, "utb.nomg"))
+	dstDB, err = kvdb.NewReadWriteLevelDB(filepath.Join(dir, "utb.nomg"))
 	if err != nil {
 		panic(err)
 	}
@@ -68,17 +73,17 @@ func TestMimc(t *testing.T) {
 	dstDB.Close()
 
 	fmt.Println("open read only")
-	dstDBRo, err := kvdb.NewReadWriteLevelDB("utb.nomg")
+	dstDBRo, err := kvdb.NewReadOnlyLevelDB(filepath.Join(dir, "utb.nomg"))
 	if err != nil {
 		panic(err)
 	}
 	checkSame(dstDBRo)
-	dstDB.Close()
-	kvdb.ShrinkMimcLevelDB("utb.nomg")
+	dstDBRo.Close()
+	kvdb.ShrinkMimcLevelDB(filepath.Join(dir, "utb.nomg"))
 }
 
 func TestSmallestMimc(t *testing.T) {
-	dstDB, err := kvdb.NewReadWriteLevelDB("small.nomg")
+	dstDB, err := kvdb.NewReadWriteLevelDB(filepath.Join(t.TempDir(), "small.nomg"))
 	if err != nil {
 		panic(err)
 	}

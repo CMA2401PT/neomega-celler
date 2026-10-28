@@ -36,7 +36,10 @@ func (s *Map[T]) IterNonDefault(fn func(celler.SubChunkBlockPos, T) (next bool))
 }
 
 func (s *Map[T]) Get(pos celler.SubChunkBlockPos) T {
-	return s.Data[s.posToIdx(pos)]
+	if value, ok := s.Data[s.posToIdx(pos)]; ok {
+		return value
+	}
+	return s.DefaultValue
 }
 
 func (s *Map[T]) Default() T {
@@ -63,6 +66,16 @@ func (s *Map[T]) Set(pos celler.SubChunkBlockPos, b T) {
 
 func (s *Map[T]) Same() (d T, allSame bool) {
 	if s.Data == nil || len(s.Data) == 0 {
+		return s.DefaultValue, true
+	}
+	// Missing entries still contain DefaultValue. A partial map with
+	// non-default entries therefore cannot describe a uniform layer.
+	if len(s.Data) < 4096 {
+		for _, v := range s.Data {
+			if v != s.DefaultValue {
+				return d, false
+			}
+		}
 		return s.DefaultValue, true
 	}
 	var firstV T

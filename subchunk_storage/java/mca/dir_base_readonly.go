@@ -11,7 +11,15 @@ var _ ReadOnlyStor = &dirBaseRoStor{}
 
 type WF struct {
 	*os.File
-	onClose func()
+	onClose   func()
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// Closing a region must also invalidate the directory's handle cache.
+func (w *WF) Close() error {
+	w.closeOnce.Do(func() { w.closeErr = w.File.Close(); w.onClose() })
+	return w.closeErr
 }
 
 type dirBaseRoStor struct {
@@ -21,8 +29,16 @@ type dirBaseRoStor struct {
 }
 
 func (s *dirBaseRoStor) Close() error {
+	s.mu.RLock()
+	handles := make([]*WF, 0, len(s.fhCache))
 	for _, w := range s.fhCache {
-		w.Close()
+		handles = append(handles, w)
+	}
+	s.mu.RUnlock()
+	for _, w := range handles {
+		if err := w.Close(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -51,11 +67,14 @@ func (s *dirBaseRoStor) OpenRegion(rp RegionPos) (Reader, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if w, ok := s.fhCache[rp]; ok {
-		return w.File, nil
+		return w, nil
 	}
 	baseName := RegionPosToFileName(rp)
 	fullName := filepath.Join(s.dir, baseName)
 	fp, err := os.OpenFile(fullName, os.O_RDONLY, 0755)
+	if err != nil {
+		return nil, err
+	}
 	s.fhCache[rp] = &WF{
 		File: fp,
 		onClose: func() {
@@ -64,7 +83,7 @@ func (s *dirBaseRoStor) OpenRegion(rp RegionPos) (Reader, error) {
 			delete(s.fhCache, rp)
 		},
 	}
-	return fp, err
+	return s.fhCache[rp], nil
 }
 
 func OpenDirReadOnly(dir string) (ReadOnlyStor, error) {

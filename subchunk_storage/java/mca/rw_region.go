@@ -88,9 +88,9 @@ func (rw *RwRegion) setHead(x, z uint8, offset, timestamp uint32) {
 	rw.chunkDataLocation[z][x] = offset
 	binary.BigEndian.PutUint32(buf[:], offset)
 	rw.bw.WriteAt(buf[:], int64(4*(int(z)*32+int(x))))
-	rw.Timestamps[x][z] = timestamp
+	rw.Timestamps[z][x] = timestamp
 	binary.BigEndian.PutUint32(buf[:], timestamp)
-	rw.bw.WriteAt(buf[:], (int64(4*(int(z)+int(x)*32) + 4096)))
+	rw.bw.WriteAt(buf[:], (int64(4*(int(z)*32+int(x)) + 4096)))
 }
 
 func newRwRegion(rw RW) (*RwRegion, error) {

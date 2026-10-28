@@ -95,7 +95,7 @@ var ErrNoData = errors.New("no data")
 
 func (rr *RoRegion) getChunkData(sp InRegionPos) ([]byte, error) {
 	rr.mu.RLock()
-	rr.mu.RUnlock()
+	defer rr.mu.RUnlock()
 
 	sec, _ := rr.decodeSpace(rr.chunkDataLocation[sp.Cz][sp.Cx])
 	if sec == 0 {
@@ -119,7 +119,7 @@ func (rr *RoRegion) getChunkData(sp InRegionPos) ([]byte, error) {
 	if ct == 3 {
 		return data[1:], err
 	}
-	var cr io.Reader
+	var cr io.ReadCloser
 	switch ct {
 	default:
 		err = errors.New("unknown compression")
@@ -132,6 +132,7 @@ func (rr *RoRegion) getChunkData(sp InRegionPos) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer cr.Close()
 	data, err = io.ReadAll(cr)
 	return data, err
 }

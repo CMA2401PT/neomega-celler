@@ -176,8 +176,8 @@ func TestMapStorageAnyDumpAndLoad(t *testing.T) {
 	outBuf := bytes.NewBuffer(nil)
 	aT.Dump(outBuf)
 	testoutBytes := outBuf.Bytes()
-	if len(testoutBytes) != 12 {
-		t.Errorf("expect len=32, get %v", len(testoutBytes))
+	if len(testoutBytes) != 8 {
+		t.Errorf("expect len=8, get %v", len(testoutBytes))
 	}
 	fmt.Println(testoutBytes)
 

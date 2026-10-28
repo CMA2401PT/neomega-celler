@@ -22,10 +22,23 @@ func (ce *ChunkEncoder[T]) EncodeSubChunkChunkBlocks(buf Writer, Y int32, stor *
 	buf.WriteByte(9)              // version
 	buf.WriteByte(1)              // layer count=1
 	buf.WriteByte(uint8(int8(Y))) // y subchunk pos
-	if stor.Level == 0 {          // std minecraft not support level 0 storage
-		l1Stor := &layer_storage.Palette[T]{}
-		l1Stor.Fill(1, stor.Default())
-		stor = l1Stor
+	// Bedrock disk palettes support 1..6, 8 and 16 bits per index.
+	level := stor.Level
+	if level == 0 {
+		level = 1
+	} else if level == 7 {
+		level = 8
+	} else if level > 8 {
+		level = 16
+	}
+	if level != stor.Level {
+		converted := &layer_storage.Palette[T]{}
+		converted.Fill(int(level), stor.Default())
+		converted.SetPalette(stor.GetUsedPalette())
+		for pos, index := range stor.IterNonDefaultPaletteI {
+			converted.SetIndex(pos, index)
+		}
+		stor = converted
 	}
 	blockSize := uint8(stor.Level)
 	blockSize <<= 1

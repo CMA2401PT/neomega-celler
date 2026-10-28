@@ -3,12 +3,12 @@ package bedrock
 import (
 	"bytes"
 	"celler"
+	"celler/internal/nbtutil"
 	"celler/layer_storage"
 	"fmt"
 	"math"
-	"neomega_nbt"
-	"neomega_nbt/caster"
-	"neomega_nbt/encoding"
+
+	nbt "neomega-nbt/presets/v1"
 
 	"github.com/df-mc/goleveldb/leveldb"
 )
@@ -48,7 +48,7 @@ func (c *chunkSnbtWithChangeMark) Drop(y celler.ChunkUnit) {
 	for _, p := range toDrop {
 		delete(c.Snbts, p)
 	}
-	c.Change = len(toDrop) != 0
+	c.Change = c.Change || len(toDrop) != 0
 }
 
 func (c *chunkSnbtWithChangeMark) Update(y celler.ChunkUnit, snbts *layer_storage.Map[celler.SNBT]) {
@@ -65,7 +65,7 @@ func (c *chunkSnbtWithChangeMark) Update(y celler.ChunkUnit, snbts *layer_storag
 	for _, p := range toDrop {
 		delete(c.Snbts, p)
 	}
-	c.Change = len(toDrop) != 0
+	c.Change = c.Change || len(toDrop) != 0
 	for ip, data := range snbts.IterNonDefault {
 		cp := celler.ChunkBlockPos{X: ip.X, Y: int16(ip.Y) | int16(y)<<4, Z: ip.Z}
 		if c.Snbts[cp] != data {
@@ -108,17 +108,14 @@ func (p *BedrockStorageReadOnly[T]) loadChunkNBT(position celler.ChunkPos) (chun
 	buf := bytes.NewBuffer(data)
 
 	for buf.Len() != 0 {
-		_, blockNbtI, err := neomega_nbt.NBTDecodeFrom[encoding.LittleEndian](buf)
+		blockNbt, err := nbtutil.Read(buf, nbt.EncodingLittleEndian)
 		if err != nil {
 			return chunkSnbts
 		}
-		blockNbt, ok := blockNbtI.(map[string]any)
-		if !ok {
-			continue
-		}
-		x := neomega_nbt.ReadFromNBT(blockNbt, "x", math.MaxInt)
-		y := neomega_nbt.ReadFromNBT(blockNbt, "y", math.MaxInt16)
-		z := neomega_nbt.ReadFromNBT(blockNbt, "z", math.MaxInt)
+
+		x := nbtutil.Coordinate(blockNbt, "x", math.MaxInt)
+		y := nbtutil.Coordinate(blockNbt, "y", math.MaxInt16)
+		z := nbtutil.Coordinate(blockNbt, "z", math.MaxInt)
 		if !position.X.InRange(x) || !position.Z.InRange(z) || y > math.MaxInt16 || y < math.MinInt16 {
 			fmt.Printf("block nbt %v @ %v %v %v -> out of chunk range\n", blockNbt, x, y, z)
 			continue
@@ -126,7 +123,7 @@ func (p *BedrockStorageReadOnly[T]) loadChunkNBT(position celler.ChunkPos) (chun
 		delete(blockNbt, "x")
 		delete(blockNbt, "y")
 		delete(blockNbt, "z")
-		snbt, err := neomega_nbt.SNBTEncode(blockNbt, caster.DefaultCaster)
+		snbt, err := nbtutil.ToSNBT(blockNbt)
 		if err != nil {
 			fmt.Printf("encode %v @ %v %v %v -> snbt err: %v\n", x, y, z, blockNbt, err)
 			continue
@@ -142,7 +139,7 @@ func (p *BedrockStorageReadOnly[T]) loadSubChunkNBT(position celler.SubChunkPos)
 	snbts *layer_storage.Map[celler.SNBT],
 ) {
 	chunkSNBTs := p.loadChunkNBT(position.ChunkPos)
-	snbts = layer_storage.New(celler.SNBT(0)).Map()
+	snbts = layer_storage.New(celler.SNBT("")).Map()
 	for cp, snbt := range chunkSNBTs.GetSubChunkSNBTs(position.Y) {
 		snbts.Set(cp, snbt)
 	}
@@ -169,24 +166,24 @@ func (p *BedrockStorageReadWrite[T]) updateChunkNBT(position celler.ChunkPos, ch
 		X := int32(position.X)<<4 | int32(bp.X&0xf)
 		Z := int32(position.Z)<<4 | int32(bp.Z&0xf)
 		Y := int32(bp.Y)
-		blockNBTI, err := neomega_nbt.SNBTDecode(string(snbt))
+		blockNBT, err := nbtutil.FromSNBT(string(snbt))
 		if err != nil {
 			fmt.Printf("snbt decode %v @ %v %v %v -> nbt err: %v\n", string(snbt), X, Y, Z, err)
 			continue
 		}
-		blockNBT, ok := blockNBTI.(map[string]any)
-		if !ok || blockNBT == nil {
+		if blockNBT == nil {
 			fmt.Printf(" %v @ %v %v %v is not map[string]any\n", string(snbt), X, Y, Z)
 			continue
 		}
 		blockNBT["x"] = X
 		blockNBT["y"] = Y
 		blockNBT["z"] = Z
-		err = neomega_nbt.NBTEncodeTo[encoding.LittleEndian](buf, "", blockNBT, caster.DefaultCaster)
+		raw, err := nbtutil.Encode(blockNBT, nbt.EncodingLittleEndian)
 		if err != nil {
 			fmt.Printf("encode %v @ %v %v %v -> nbt err: %v\n", blockNBT, X, Y, Z, err)
 			continue
 		}
+		buf.Write(raw)
 	}
 	p.RWDB.Put(append(key, keyBlockEntities), buf.Bytes())
 }

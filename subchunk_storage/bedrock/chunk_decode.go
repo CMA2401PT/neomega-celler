@@ -3,12 +3,12 @@ package bedrock
 import (
 	"bytes"
 	"celler"
+	"celler/internal/nbtutil"
 	"celler/layer_storage"
 	"encoding/binary"
 	"fmt"
 	"io"
-	"neomega_nbt/encoding"
-	"neomega_nbt/nbt"
+	nbt "neomega-nbt/presets/v1"
 
 	"github.com/df-mc/goleveldb/leveldb"
 )
@@ -52,7 +52,7 @@ func (cd *ChunkDecoder[T]) DecodeSubChunkBlocks(buf Reader, checkY int32) (p *la
 			// The index as written here isn't the actual index of the subchunk within the chunk. Rather, it is the Y
 			// value of the subchunk. This means that we need to translate it to an index.
 			if int8(uIndex) != int8(checkY) {
-				panic(fmt.Errorf("subchunk Y mismatch %v!=%v", int8(uIndex), int8(checkY)))
+				return nil, fmt.Errorf("subchunk Y mismatch %v!=%v", int8(uIndex), int8(checkY))
 			}
 		}
 		if storageCount == 0 {
@@ -78,17 +78,25 @@ func (cd *ChunkDecoder[T]) decodePalettedStorage(buf Reader) (*layer_storage.Pal
 	if err != nil {
 		return nil, fmt.Errorf("error reading block size: %w", err)
 	}
+	if blockSize&1 != 0 {
+		return nil, fmt.Errorf("runtime-ID palettes are not disk palettes")
+	}
 	blockSize >>= 1
 	if blockSize == 0x7f {
 		return nil, nil
 	}
 
+	switch blockSize {
+	case 0, 1, 2, 3, 4, 5, 6, 8, 16:
+	default:
+		return nil, fmt.Errorf("unsupported palette bit width %d", blockSize)
+	}
 	stor := &layer_storage.Palette[T]{}
 	stor.Fill(int(blockSize), cd.DefaultBlockID)
 
 	byteCount := len(stor.Data) * 4
 	data := make([]byte, byteCount)
-	readCount, err := buf.Read(data)
+	readCount, err := io.ReadFull(buf, data)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +107,13 @@ func (cd *ChunkDecoder[T]) decodePalettedStorage(buf Reader) (*layer_storage.Pal
 		// Explicitly don't use the binary package to greatly improve performance of reading the Uint32s.
 		stor.Data[i] = uint32(data[i*4]) | uint32(data[i*4+1])<<8 | uint32(data[i*4+2])<<16 | uint32(data[i*4+3])<<24
 	}
-	if stor.Level > 0 {
+	if stor.Level == 0 {
+		value, err := cd.decodePaletteBlock(buf)
+		if err != nil {
+			return nil, err
+		}
+		stor.SetPalette([]T{value})
+	} else {
 		palette, err := cd.decodePalette(buf)
 		if err != nil {
 			return nil, err
@@ -120,8 +134,7 @@ func (cd *ChunkDecoder[T]) decodePalette(buf Reader) ([]T, error) {
 	for i := uint32(0); i < paletteCount; i++ {
 		palette[i], err = cd.decodePaletteBlock(buf)
 		if err != nil {
-			fmt.Printf("decode bedrock level db palette error: %v", err)
-			// ignore this and continue
+			return nil, fmt.Errorf("palette entry %d: %w", i, err)
 		}
 	}
 	return palette, nil
@@ -134,9 +147,6 @@ type ByPassReader struct {
 
 func (r *ByPassReader) Read(p []byte) (n int, err error) {
 	n, err = r.in.Read(p)
-	if err != nil {
-		return n, err
-	}
 	r.r.Write(p[:n])
 	return n, err
 }
@@ -152,8 +162,7 @@ func (r *ByPassReader) ReadByte() (b byte, err error) {
 
 func (cd *ChunkDecoder[T]) decodePaletteBlock(buf Reader) (rtid T, err error) {
 	bp := &ByPassReader{in: buf, r: bytes.NewBuffer(nil)}
-	err = nbt.DryDecodeTagAndValue[encoding.LittleEndian](bp)
-	// _, v, err := neomega_nbt.NBTDecodeFrom[encoding.LittleEndian](buf, caster.DefaultCaster)
+	_, err = nbtutil.Read(bp, nbt.EncodingLittleEndian)
 	if err != nil {
 		return 0, fmt.Errorf("error decoding block palette entry: %w", err)
 	}

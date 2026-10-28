@@ -4,21 +4,19 @@ import (
 	"bytes"
 	"crypto/rand"
 	"io"
-	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestMimcCore(t *testing.T) {
-	os.RemoveAll("mimc.dat")
-	fs, err := NewMimcCore("mimc.dat", 128*1024)
-	if fs.String() != "#" {
-		t.Fatal(fs.String())
-	}
-	defer fs.Close()
+	fs, err := NewMimcCore(filepath.Join(t.TempDir(), "mimc.dat"), 128*1024)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer fs.Close()
+	if fs.String() != "#" {
+		t.Fatal(fs.String())
+	}
 
 	checkPos := func(seek func(offset int64, whence int) (ret int64, err error), v0, v1, v2 int64) {
 		v, _ := seek(0, 1)

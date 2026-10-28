@@ -35,9 +35,7 @@ func (db *MCARoKV) getRegion(rp RegionPos) (r *RoRegion) {
 	if r, exist := db.regionCache.Get(rp); exist {
 		return r
 	}
-	defer func() {
-		db.regionCache.Add(rp, r)
-	}()
+
 	// fmt.Println("open region", rp)
 	rd, err := db.RoStor.OpenRegion(rp)
 	if err != nil {
@@ -45,8 +43,10 @@ func (db *MCARoKV) getRegion(rp RegionPos) (r *RoRegion) {
 	}
 	r, err = newRoRegion(rd)
 	if err != nil {
-		return
+		rd.Close()
+		return nil
 	}
+	db.regionCache.Add(rp, r)
 	return r
 }
 
@@ -59,17 +59,16 @@ func (db *MCARoKV) Close() error {
 
 func (db *MCARoKV) IterAll(interFn func(celler.ChunkPos) (continueIter bool)) {
 	for rp := range db.RoStor.IterRegions {
-		rd, err := db.RoStor.OpenRegion(rp)
-		if rd == nil || err != nil {
+		rg := db.getRegion(rp)
+		if rg == nil {
 			continue
 		}
-		rg, err := newRoRegion(rd)
-		if rg == nil || err != nil {
-			continue
-		}
+		rg.mu.RLock()
+		locations := rg.chunkDataLocation
+		rg.mu.RUnlock()
 		for x := uint8(0); x < 32; x++ {
 			for z := uint8(0); z < 32; z++ {
-				space := rg.chunkDataLocation[x][z]
+				space := locations[z][x]
 				start, count := rg.decodeSpace(space)
 				if start == 0 || count == 0 {
 					continue

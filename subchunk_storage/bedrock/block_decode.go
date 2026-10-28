@@ -1,64 +1,40 @@
 package bedrock
 
 import (
+	"celler/internal/nbtutil"
 	"fmt"
-	"neomega_blocks"
-	"neomega_blocks/description"
-	"neomega_blocks/preset"
-	"neomega_nbt"
-	"neomega_nbt/encoding"
-	"unsafe"
+	"neomega-blocks/ir"
+	blocks "neomega-blocks/presets/block-converts/v1"
+	nbt "neomega-nbt/presets/v1"
+	"sync"
 )
 
-var decodeCache map[string]struct {
-	v   neomega_blocks.UIBI
-	err error
-} = nil
+var decodeCache sync.Map // map[string]uint32
 
-func DefaultBlockDecode(rawNbt []byte) (id neomega_blocks.UIBI, err error) {
-	cacheKey := *(*string)(unsafe.Pointer(&rawNbt))
-	if decodeCache == nil {
-		decodeCache = make(map[string]struct {
-			v   neomega_blocks.UIBI
-			err error
-		})
-		preset.Load()
+// DefaultBlockDecode returns the canonical Bedrock block hash used by presets/v1.
+func DefaultBlockDecode(rawNBT []byte) (uint32, error) {
+	key := string(rawNBT)
+	if value, ok := decodeCache.Load(key); ok {
+		return value.(uint32), nil
 	}
-	if i, found := decodeCache[cacheKey]; found {
-		return i.v, i.err
-	}
-	cacheKey = string(rawNbt)
-	defer func() {
-		decodeCache[cacheKey] = struct {
-			v   neomega_blocks.UIBI
-			err error
-		}{v: id, err: err}
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
-	_, value, err := neomega_nbt.NBTDecode[encoding.LittleEndian](rawNbt)
-	bNbt, ok := value.(map[string]any)
-	if !ok {
-		return neomega_blocks.AIR, fmt.Errorf("invalid nbt data")
-	}
-	var name string
-	var state map[string]any
-	nameI, ok := bNbt["name"]
-	if ok {
-		name, _ = nameI.(string)
-	}
-	stateI, ok := bNbt["states"]
-	if ok {
-		state, _ = stateI.(map[string]any)
-	}
-	blk, err := description.ParseBlockState(name, state, description.DefaultCaster)
+	value, err := nbtutil.Decode(rawNBT, nbt.EncodingLittleEndian)
 	if err != nil {
-		return neomega_blocks.AIR, fmt.Errorf("fail to parse nbt block")
+		return 0, err
 	}
-	uniID, found := preset.BedrockToUIBI.BlockToBestID(blk, description.ScoreFnDefault)
-	if !found {
-		return neomega_blocks.AIR, fmt.Errorf("cannot find uni id")
+	name, ok := value["name"].(string)
+	if !ok {
+		return 0, fmt.Errorf("block NBT is missing its name")
 	}
-	return uniID, nil
+	states, _ := value["states"].(map[string]any)
+	block, err := ir.NewIRBlockFromGo(name, states)
+	if err != nil {
+		return 0, err
+	}
+	canonical, ok := blocks.ConvertFromBedrock(block)
+	if !ok {
+		return 0, fmt.Errorf("unknown Bedrock block: %s", block)
+	}
+	id := canonical.Hash()
+	decodeCache.Store(key, id)
+	return id, nil
 }

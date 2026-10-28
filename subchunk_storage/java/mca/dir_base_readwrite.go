@@ -16,11 +16,14 @@ func (s *dirBaseRWStor) OpenRegion(rp RegionPos) (RW, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if w, ok := s.fhCache[rp]; ok {
-		return w.File, nil
+		return w, nil
 	}
 	baseName := RegionPosToFileName(rp)
 	fullName := filepath.Join(s.dir, baseName)
 	fp, err := os.OpenFile(fullName, os.O_CREATE|os.O_RDWR, 0755)
+	if err != nil {
+		return nil, err
+	}
 	s.fhCache[rp] = &WF{
 		File: fp,
 		onClose: func() {
@@ -29,11 +32,13 @@ func (s *dirBaseRWStor) OpenRegion(rp RegionPos) (RW, error) {
 			delete(s.fhCache, rp)
 		},
 	}
-	return fp, err
+	return s.fhCache[rp], nil
 }
 
 func OpenDirReadWrite(dir string) (ReadWriteStor, error) {
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
 	return &dirBaseRWStor{
 		&dirBaseRoStor{
 			dir:     dir,

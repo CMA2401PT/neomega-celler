@@ -4,11 +4,12 @@ import (
 	"celler"
 	"celler/layer_storage"
 	"fmt"
-	"neomega_blocks"
-	"neomega_blocks/preset"
-	"neomega_nbt"
-	"neomega_nbt/caster"
-	"neomega_nbt/encoding"
+	"math/bits"
+
+	"celler/internal/nbtutil"
+	blocks "neomega-blocks/presets/block-converts/v1"
+
+	nbt "neomega-nbt/presets/v1"
 )
 
 type ChunkEncoder struct{}
@@ -17,7 +18,7 @@ var chunkEncode = ChunkEncoder{}
 
 func (ce ChunkEncoder) EncodeChunk(pos celler.ChunkPos, c *ChunkWithChangeMark) []byte {
 	if c == nil {
-		data, _ := neomega_nbt.NBTEncode[encoding.BigEndian]("", map[string]any{}, caster.DefaultCaster)
+		data, _ := nbtutil.Encode(map[string]any{}, nbt.EncodingBigEndian)
 		return data
 	}
 	if c.Subchunks == nil {
@@ -41,7 +42,7 @@ func (ce ChunkEncoder) EncodeChunk(pos celler.ChunkPos, c *ChunkWithChangeMark) 
 	sections := []any{}
 	for y, sc := range c.Subchunks {
 		section := map[string]any{
-			"Y":            uint8(y),
+			"Y":            int8(y),
 			"block_states": ce.EncodeBlockStates(sc.BlockIDStorage),
 		}
 		sections = append(sections, section)
@@ -55,7 +56,7 @@ func (ce ChunkEncoder) EncodeChunk(pos celler.ChunkPos, c *ChunkWithChangeMark) 
 	chunkNBT["Status"] = "minecraft:full"
 	chunkNBT["InhabitedTime"] = int64(50)
 	chunkNBT["DataVersion"] = int32(3839)
-	data, _ := neomega_nbt.NBTEncode[encoding.BigEndian]("", chunkNBT, caster.DefaultCaster)
+	data, _ := nbtutil.Encode(chunkNBT, nbt.EncodingBigEndian)
 	return data
 }
 
@@ -68,13 +69,12 @@ func (ChunkEncoder) EncodeNBT(cp celler.ChunkPos, snbts map[celler.ChunkBlockPos
 		X := int32(cp.X)<<4 | int32(icp.X&0xf)
 		Z := int32(cp.Z)<<4 | int32(icp.Z&0xf)
 		Y := int32(icp.Y)
-		blockNBTI, err := neomega_nbt.SNBTDecode(string(snbt))
+		blockNBT, err := nbtutil.FromSNBT(string(snbt))
 		if err != nil {
 			fmt.Printf("snbt decode %v @ %v %v %v -> nbt err: %v\n", string(snbt), X, Y, Z, err)
 			continue
 		}
-		blockNBT, ok := blockNBTI.(map[string]any)
-		if !ok || blockNBT == nil {
+		if blockNBT == nil {
 			fmt.Printf(" %v @ %v %v %v is not map[string]any\n", string(snbt), X, Y, Z)
 			continue
 		}
@@ -86,22 +86,29 @@ func (ChunkEncoder) EncodeNBT(cp celler.ChunkPos, snbts map[celler.ChunkBlockPos
 	return out
 }
 
-func (ChunkEncoder) EncodeBlockStates(p *layer_storage.Palette[neomega_blocks.UIBI]) map[string]any {
+func (ChunkEncoder) EncodeBlockStates(p *layer_storage.Palette[uint32]) map[string]any {
 	bs := map[string]any{}
 	var blockData []int64
 	blockPalette := []map[string]any{}
 	ps := p.GetUsedPalette()
 	for _, uibi := range ps {
-		blk, _ := preset.UIBIToJava_1_20_50.IDToBlock(uibi)
+		bedrock, _ := blocks.BedrockHashToBlockStrict(uibi)
+		blk, ok := blocks.ConvertToJava(bedrock)
+		if !ok {
+			blk = "minecraft:air []"
+		}
 		blockNbt := map[string]any{}
-		blockNbt["Name"] = blk.BaseName().LongName()
-		blockNbt["Properties"] = blk.GoMapProps()
+		blockNbt["Name"] = blk.NameWithNameSpace()
+		blockNbt["Properties"] = blk.States().GoMap()
 		blockPalette = append(blockPalette, blockNbt)
 	}
 
+	if len(ps) == 1 {
+		return map[string]any{"palette": blockPalette}
+	}
 	var set func(blockI int, v uint32)
 	{
-		bitsPerBlock := int(p.Level)
+		bitsPerBlock := bits.Len(uint(len(ps) - 1))
 		if bitsPerBlock <= 4 {
 			bitsPerBlock = 4
 		}

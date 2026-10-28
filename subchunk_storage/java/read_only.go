@@ -5,7 +5,7 @@ import (
 	"celler/layer_storage"
 	"celler/subchunk"
 	"celler/subchunk_storage/java/mca"
-	"neomega_blocks"
+
 	"sync"
 
 	"github.com/hashicorp/golang-lru/v2/simplelru"
@@ -13,8 +13,8 @@ import (
 
 type ChunkWithChangeMark struct {
 	Subchunks map[celler.ChunkUnit]*subchunk.Simple[
-		neomega_blocks.UIBI, uint32,
-		*layer_storage.Palette[neomega_blocks.UIBI],
+		uint32, uint32,
+		*layer_storage.Palette[uint32],
 		*layer_storage.PlaceHolder[uint32],
 		*layer_storage.Map[celler.SNBT],
 	]
@@ -62,7 +62,7 @@ func (s *JavaStorageReadOnly) loadChunk(position celler.ChunkPos) (chunk *ChunkW
 func (s *JavaStorageReadOnly) loadOrCreateChunk(position celler.ChunkPos) (chunk *ChunkWithChangeMark) {
 	var exist bool
 	chunk, exist = s.cache.Get(position)
-	if exist {
+	if exist && chunk != nil {
 		return chunk
 	}
 	defer func() {
@@ -71,7 +71,7 @@ func (s *JavaStorageReadOnly) loadOrCreateChunk(position celler.ChunkPos) (chunk
 	data, _ := s.rodb.Get(position)
 	if len(data) == 0 {
 		chunk = &ChunkWithChangeMark{
-			Subchunks: map[celler.ChunkUnit]*subchunk.Simple[neomega_blocks.UIBI, uint32, *layer_storage.Palette[neomega_blocks.UIBI], *layer_storage.PlaceHolder[uint32], *layer_storage.Map[celler.SNBT]]{},
+			Subchunks: map[celler.ChunkUnit]*subchunk.Simple[uint32, uint32, *layer_storage.Palette[uint32], *layer_storage.PlaceHolder[uint32], *layer_storage.Map[celler.SNBT]]{},
 			Changed:   true,
 		}
 		return chunk
@@ -81,8 +81,8 @@ func (s *JavaStorageReadOnly) loadOrCreateChunk(position celler.ChunkPos) (chunk
 }
 
 func (s *JavaStorageReadOnly) Get(position celler.SubChunkPos) *subchunk.Simple[
-	neomega_blocks.UIBI, uint32,
-	*layer_storage.Palette[neomega_blocks.UIBI],
+	uint32, uint32,
+	*layer_storage.Palette[uint32],
 	*layer_storage.PlaceHolder[uint32],
 	*layer_storage.Map[celler.SNBT],
 ] {
@@ -112,6 +112,6 @@ func (s *JavaStorageReadOnly) IterAll(cb func(celler.SubChunkPos) (next bool)) {
 	}
 }
 
-func (s *JavaStorageReadOnly) QueryChange(position celler.SubChunkPos, version celler.ChunkVersion) celler.SubChunkChange[neomega_blocks.UIBI, uint32] {
+func (s *JavaStorageReadOnly) QueryChange(position celler.SubChunkPos, version celler.ChunkVersion) celler.SubChunkChange[uint32, uint32] {
 	return s.Get(position).QueryChange(version)
 }

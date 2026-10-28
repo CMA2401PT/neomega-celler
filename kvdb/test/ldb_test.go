@@ -2,7 +2,7 @@ package test
 
 import (
 	"celler/kvdb"
-	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -11,23 +11,26 @@ func TestMemoryLevelDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	testKVDB(t, db)
 }
 
 func TestDirLevelDB(t *testing.T) {
-	os.RemoveAll("dbDir")
-	db, err := kvdb.NewReadWriteLevelDB("dbDir")
+
+	db, err := kvdb.NewReadWriteLevelDB(filepath.Join(t.TempDir(), "dbDir"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	testKVDB(t, db)
 }
 
 func TestMimcLevelDB(t *testing.T) {
-	os.RemoveAll("db.nomg")
-	db, err := kvdb.NewReadWriteLevelDB("db.nomg")
+
+	db, err := kvdb.NewReadWriteLevelDB(filepath.Join(t.TempDir(), "db.nomg"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	testKVDB(t, db)
 }

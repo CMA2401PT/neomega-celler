@@ -1,67 +1,39 @@
 package bedrock
 
 import (
-	"encoding/binary"
+	"celler/internal/nbtutil"
 	"fmt"
-	"neomega_blocks"
-	"neomega_blocks/preset"
-	"neomega_nbt"
-	"neomega_nbt/caster"
-	"neomega_nbt/encoding"
+	"neomega-blocks/ir"
+	blocks "neomega-blocks/presets/block-converts/v1"
+	nbt "neomega-nbt/presets/v1"
+	"sync"
 )
-
-var encodeCache map[neomega_blocks.UIBI]struct {
-	v   []byte
-	err error
-} = nil
 
 const chunkVersion = 27
 
-var blockVersion = int32(binary.BigEndian.Uint32([]byte{1, 20, 50, 0})) //1.20.50.0
-var airNBT = []byte{10, 0, 0, 8, 4, 0, 110, 97, 109, 101, 13, 0, 109, 105, 110, 101, 99, 114, 97, 102, 116, 58, 97, 105, 114, 10, 6, 0, 115, 116, 97, 116, 101, 115, 0, 3, 7, 0, 118, 101, 114, 115, 105, 111, 110, 0, 50, 20, 1, 0}
+var encodeCache sync.Map // map[uint32][]byte
 
-//					^TAG  TAG_S^ ^4    ^n   a   m    e    ^13    ^m    i   n     e    c   r    a   f    t    :   a   i  r  TAG_C^  ^6    ^s    t   a    t    e    s  ^END^TAG^7   ^v    e    r    s    i    o   n   6. 20. 21. 1 ^END
-
-func DefaultBlockEncode(id neomega_blocks.UIBI) (rawNbt []byte, err error) {
-	if encodeCache == nil {
-		encodeCache = make(map[neomega_blocks.UIBI]struct {
-			v   []byte
-			err error
-		})
-		preset.Load()
-		// eo, _ := DefaultBlockEncode(neomega_blocks.AIR)
-		// if !bytes.Equal(eo, airNBT) {
-		// 	panic("air or version changed!")
-		// }
+// DefaultBlockEncode accepts a canonical Bedrock block hash, not a runtime ID.
+// The returned bytes are cached and must be treated as read-only.
+func DefaultBlockEncode(id uint32) ([]byte, error) {
+	if value, ok := encodeCache.Load(id); ok {
+		return value.([]byte), nil
 	}
-	if i, found := encodeCache[id]; found {
-		return i.v, i.err
-	}
-	defer func() {
-		encodeCache[id] = struct {
-			v   []byte
-			err error
-		}{v: rawNbt, err: err}
+	block, ok := blocks.BedrockHashToBlockStrict(id)
+	if !ok {
+		air, err := DefaultBlockEncode(ir.IRBlock("minecraft:air []").Hash())
 		if err != nil {
-			fmt.Println(err)
+			return nil, err
 		}
-	}()
-
-	block, found := preset.UIBIToBedrock_1_20_50.IDToBlock(id)
-	if !found {
-		return airNBT, fmt.Errorf("cannot find bedrock nbt")
+		return air, fmt.Errorf("unknown Bedrock block hash: %d", id)
 	}
-	states := block.GoMapProps()
-	name := block.BaseName().LongName()
-
-	rawNbt, err = neomega_nbt.NBTEncode[encoding.LittleEndian]("", map[string]any{
-		"name":   string(name),
-		"states": states,
-		// "version": blockVersion,
-	}, caster.DefaultCaster)
+	raw, err := nbtutil.Encode(map[string]any{
+		"name":   block.NameWithNameSpace(),
+		"states": block.States().GoMap(),
+	}, nbt.EncodingLittleEndian)
 	if err != nil {
-		return airNBT, fmt.Errorf("fail to encode nbt block")
+		return nil, err
 	}
-
-	return rawNbt, nil
+	encodeCache.Store(id, raw)
+	return raw, nil
 }
