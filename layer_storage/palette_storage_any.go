@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"celler"
 	"celler/storage_io"
-	"fmt"
 	"io"
 	"unsafe"
 )
@@ -261,7 +260,6 @@ func (s *Palette[T]) CopyFrom(src celler.LayerStorageRead[T]) {
 		return
 	}
 	{
-		fmt.Printf("slow copy from: %T\n", src)
 		defaultV := src.Default()
 		s.InitWithDefault(defaultV)
 		for p, v := range src.IterNonDefault {
