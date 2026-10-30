@@ -10,9 +10,9 @@ require (
 
 require github.com/pierrec/lz4/v4 v4.1.22
 
-replace neomega-blocks v0.0.0 => ../neomega-blocks
+replace neomega-blocks => ../neomega-blocks
 
-replace neomega-nbt v0.0.0 => ../neomega-nbt
+replace neomega-nbt => ../neomega-nbt
 
 require (
 	github.com/golang/snappy v0.0.1 // indirect
