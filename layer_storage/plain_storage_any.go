@@ -1,13 +1,8 @@
 package layer_storage
 
-import (
-	"celler"
-	"celler/storage_io"
-	"fmt"
-	"io"
-)
+import ()
 
-type Plain[T storage_io.Number | ~string] struct {
+type Plain[T comparable] struct {
 	DefaultValue T
 	Data         []T
 }
@@ -16,19 +11,19 @@ func (Plain[T]) Make() *Plain[T] {
 	return &Plain[T]{}
 }
 
-func (s *Plain[T]) posToIdx(pos celler.SubChunkBlockPos) int {
+func (s *Plain[T]) posToIdx(pos Position) int {
 	return (int(pos.X&0xf) << 8) | (int(pos.Z&0xf) << 4) | int(pos.Y&0xf)
 }
 
-func (s *Plain[T]) idxToPos(i int) celler.SubChunkBlockPos {
-	return celler.SubChunkBlockPos{X: uint8(i >> 8 & 0xf), Y: uint8(i & 0xf), Z: uint8(i >> 4 & 0xf)}
+func (s *Plain[T]) idxToPos(i int) Position {
+	return Position{X: uint8(i >> 8 & 0xf), Y: uint8(i & 0xf), Z: uint8(i >> 4 & 0xf)}
 }
 
-func (s *Plain[T]) Get(pos celler.SubChunkBlockPos) T {
+func (s *Plain[T]) Get(pos Position) T {
 	return s.Data[s.posToIdx(pos)]
 }
 
-func (s *Plain[T]) IterNonDefault(fn func(celler.SubChunkBlockPos, T) (next bool)) {
+func (s *Plain[T]) IterNonDefault(fn func(Position, T) (next bool)) {
 	if s.Data == nil {
 		return
 	}
@@ -56,7 +51,7 @@ func (s *Plain[T]) InitWithDefault(data T) {
 	}
 }
 
-func (s *Plain[T]) Set(pos celler.SubChunkBlockPos, b T) {
+func (s *Plain[T]) Set(pos Position, b T) {
 	s.Data[s.posToIdx(pos)] = b
 }
 
@@ -70,7 +65,7 @@ func (s *Plain[T]) Same() (d T, allSame bool) {
 	return first, true
 }
 
-func (s *Plain[T]) CopyFrom(src celler.LayerStorageRead[T]) {
+func (s *Plain[T]) CopyFrom(src Read[T]) {
 	if placeHolderSrc, ok := src.(*PlaceHolder[T]); ok {
 		s.InitWithDefault(placeHolderSrc.Default())
 		return
@@ -100,7 +95,6 @@ func (s *Plain[T]) CopyFrom(src celler.LayerStorageRead[T]) {
 		return
 	}
 	{
-		fmt.Printf("slow copy from: %T\n", src)
 		defaultV := src.Default()
 		s.InitWithDefault(defaultV)
 		for p, v := range src.IterNonDefault {
@@ -109,18 +103,8 @@ func (s *Plain[T]) CopyFrom(src celler.LayerStorageRead[T]) {
 	}
 }
 
-func MakePlainStorage[T storage_io.Number | ~string](defaultV T) *Plain[T] {
+func MakePlainStorage[T comparable](defaultV T) *Plain[T] {
 	storage := &Plain[T]{}
 	storage.InitWithDefault(defaultV)
 	return storage
-}
-
-func (s *Plain[T]) Dump(w io.Writer) {
-	storage_io.WriteValue(w, s.DefaultValue)
-	storage_io.WriteArrayWithoutCount(w, s.Data)
-}
-
-func (s *Plain[B]) Load(r io.Reader) {
-	s.DefaultValue = storage_io.ReadValue[B](r)
-	s.Data = storage_io.ReadArrayWithoutCount[B](r, 4096)
 }

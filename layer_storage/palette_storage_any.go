@@ -1,14 +1,6 @@
 package layer_storage
 
-import (
-	"bytes"
-	"celler"
-	"celler/storage_io"
-	"io"
-	"unsafe"
-)
-
-type Palette[T storage_io.Number | ~string] struct {
+type Palette[T comparable] struct {
 	Data                  []uint32
 	Palette               []T
 	Level                 uint32
@@ -19,7 +11,7 @@ type Palette[T storage_io.Number | ~string] struct {
 	LastVisitPaletteValue T
 }
 
-func ConvertPalette[SRC, DST storage_io.Number | ~string](
+func ConvertPalette[SRC, DST comparable](
 	src *Palette[SRC],
 	cvt func(src SRC) DST,
 ) *Palette[DST] {
@@ -27,7 +19,7 @@ func ConvertPalette[SRC, DST storage_io.Number | ~string](
 		return nil
 	}
 	dst := &Palette[DST]{
-		Data:                  src.Data,
+		Data:                  append([]uint32(nil), src.Data...),
 		Level:                 src.Level,
 		IdxsPerUint32:         src.IdxsPerUint32,
 		Mask:                  src.Mask,
@@ -51,7 +43,7 @@ func (Palette[T]) Make() *Palette[T] {
 
 func (s *Palette[T]) getPaletteIndexByBlockIdx(posIdx int) int {
 	if s.Level == 0 {
-		return int(s.LastVisitPaletteIdx)
+		return 0
 	}
 	index := posIdx / int(s.IdxsPerUint32)
 	offset := (posIdx % int(s.IdxsPerUint32)) * int(s.Level)
@@ -109,19 +101,19 @@ func (s *Palette[T]) GetUsedPalette() []T {
 	return out
 }
 
-func (s *Palette[T]) posToIdx(pos celler.SubChunkBlockPos) int {
+func (s *Palette[T]) posToIdx(pos Position) int {
 	return (int(pos.X&0xf) << 8) | (int(pos.Z&0xf) << 4) | int(pos.Y&0xf)
 }
 
-func (s *Palette[T]) idxToPos(i int) celler.SubChunkBlockPos {
-	return celler.SubChunkBlockPos{X: uint8(i >> 8 & 0xf), Y: uint8(i & 0xf), Z: uint8(i >> 4 & 0xf)}
+func (s *Palette[T]) idxToPos(i int) Position {
+	return Position{X: uint8(i >> 8 & 0xf), Y: uint8(i & 0xf), Z: uint8(i >> 4 & 0xf)}
 }
 
-func (s *Palette[T]) Get(pos celler.SubChunkBlockPos) T {
+func (s *Palette[T]) Get(pos Position) T {
 	return s.Palette[s.getPaletteIndexByBlockIdx(s.posToIdx(pos))]
 }
 
-func (s *Palette[T]) IterNonDefault(fn func(celler.SubChunkBlockPos, T) (next bool)) {
+func (s *Palette[T]) IterNonDefault(fn func(Position, T) (next bool)) {
 	if s.Level == 0 {
 		return
 	}
@@ -136,7 +128,7 @@ func (s *Palette[T]) IterNonDefault(fn func(celler.SubChunkBlockPos, T) (next bo
 	}
 }
 
-func (s *Palette[T]) IterNonDefaultPaletteI(fn func(celler.SubChunkBlockPos, int) (next bool)) {
+func (s *Palette[T]) IterNonDefaultPaletteI(fn func(Position, int) (next bool)) {
 	if s.Level == 0 {
 		return
 	}
@@ -183,7 +175,7 @@ func (s *Palette[T]) Fill(level int, fill T) {
 	s.LastPaletteIdx = 0
 }
 
-func (s *Palette[T]) Set(pos celler.SubChunkBlockPos, b T) {
+func (s *Palette[T]) Set(pos Position, b T) {
 	if s.Level == 0 && s.Palette[0] == b {
 		return
 	}
@@ -208,7 +200,10 @@ func (s *Palette[T]) Set(pos celler.SubChunkBlockPos, b T) {
 	s.setPaletteIndexByBlockIdx(s.posToIdx(pos), uint32(idx))
 }
 
-func (s *Palette[T]) SetIndex(pos celler.SubChunkBlockPos, idx int) {
+func (s *Palette[T]) SetIndex(pos Position, idx int) {
+	if s.Level == 0 {
+		return
+	}
 	s.setPaletteIndexByBlockIdx(s.posToIdx(pos), uint32(idx))
 }
 
@@ -225,7 +220,7 @@ func (s *Palette[T]) Same() (d T, allSame bool) {
 	return s.Palette[firstPaletteIdx], true
 }
 
-func (s *Palette[T]) CopyFrom(src celler.LayerStorageRead[T]) {
+func (s *Palette[T]) CopyFrom(src Read[T]) {
 	if placeHolderSrc, ok := src.(*PlaceHolder[T]); ok {
 		s.InitWithDefault(placeHolderSrc.Default())
 		return
@@ -268,53 +263,11 @@ func (s *Palette[T]) CopyFrom(src celler.LayerStorageRead[T]) {
 	}
 }
 
-func MakePaletteStorage[T storage_io.Number | ~string](defaultV T) *Palette[T] {
+func MakePaletteStorage[T comparable](defaultV T) *Palette[T] {
 	storage := &Palette[T]{}
 	storage.InitWithDefault(defaultV)
 	return storage
 }
 
-func (s *Palette[T]) Dump(w io.Writer) {
-	if s == nil {
-		storage_io.WriteValue(w, uint32(0))
-		return
-	}
-	head := []uint32{s.Level, s.IdxsPerUint32, s.Mask, s.LastPaletteIdx, s.LastVisitPaletteIdx}
-	pb := bytes.NewBuffer(nil)
-	storage_io.WriteArrayWithoutCount(pb, append([]T{s.LastVisitPaletteValue}, s.Palette...))
-	pBytes := pb.Bytes()
-	if len(pBytes)%4 != 0 {
-		pBytes = append(pBytes, make([]byte, 4-len(pBytes)%4)...)
-	}
-	storage_io.WriteValue(w, uint32(5+len(pBytes)/4+len(s.Data)))
-	w.Write(unsafe.Slice((*byte)(unsafe.Pointer(&head[0])), 20))
-	w.Write(pBytes)
-	if len(s.Data) > 0 {
-		p := (unsafe.Pointer(&s.Data[0]))
-		w.Write(unsafe.Slice((*byte)(p), len(s.Data)*4))
-	}
-}
-
-func (s *Palette[B]) Load(r io.Reader) {
-	dataLen := storage_io.ReadValue[uint32](r)
-	reciver := make([]byte, dataLen*4)
-	r.Read(reciver)
-	uint32Arr := unsafe.Slice((*uint32)(unsafe.Pointer(&reciver[0])), dataLen)
-	s.Level = uint32Arr[0]
-	s.IdxsPerUint32 = uint32Arr[1]
-	s.Mask = uint32Arr[2]
-	s.LastPaletteIdx = uint32Arr[3]
-	s.LastVisitPaletteIdx = uint32Arr[4]
-	pb := bytes.NewReader(reciver[20:])
-	lastAndpalette := storage_io.ReadArrayWithoutCount[B](pb, int(1<<s.Level)+1)
-	s.LastVisitPaletteValue = lastAndpalette[0]
-	s.Palette = lastAndpalette[1:]
-	var arraySize = 0
-	if s.Level != 0 {
-		arraySize = int(4096+s.IdxsPerUint32-1) / int(s.IdxsPerUint32)
-		dataBytes := reciver[len(reciver)-4*arraySize:]
-		s.Data = unsafe.Slice((*uint32)(unsafe.Pointer(&dataBytes[0])), arraySize)
-	} else {
-		s.Data = make([]uint32, 0)
-	}
-}
+// GetIndex returns the local palette index at pos.
+func (s *Palette[T]) GetIndex(pos Position) int { return s.getPaletteIndexByBlockIdx(s.posToIdx(pos)) }

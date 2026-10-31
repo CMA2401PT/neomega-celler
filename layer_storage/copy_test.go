@@ -1,12 +1,10 @@
 package layer_storage
 
 import (
-	"celler"
-	"celler/storage_io"
 	"testing"
 )
 
-func CopyStorage[D storage_io.Number | ~string, OutStorageT celler.Storage[D], OutStorageM celler.StorageMaker[D, OutStorageT]](src celler.LayerStorageRandomRead[D]) OutStorageT {
+func CopyStorage[D comparable, OutStorageT Storage[D], OutStorageM StorageMaker[D, OutStorageT]](src RandomRead[D]) OutStorageT {
 	var maker OutStorageM
 	out := maker.Make()
 	out.CopyFrom(src)
@@ -20,17 +18,17 @@ func TestCopyFrom(t *testing.T) {
 		for y := 0; y < 16; y++ {
 			for z := 0; z < 16; z++ {
 				if z%3 == 0 {
-					pa.Set(celler.ToSubChunkBlockPos(x, y, z), uint32(x*100+y*10+z))
+					pa.Set(At(x, y, z), uint32(x*100+y*10+z))
 				} else if z%3 == 1 {
-					pa.Set(celler.ToSubChunkBlockPos(x, y, z), uint32(x*100+y*10-z))
+					pa.Set(At(x, y, z), uint32(x*100+y*10-z))
 				} else {
-					pa.Set(celler.ToSubChunkBlockPos(x, y, z), uint32(x*100+y*10+2*z))
+					pa.Set(At(x, y, z), uint32(x*100+y*10+2*z))
 				}
 			}
 		}
 	}
 
-	check := func(final celler.LayerStorageRandomRead[uint32]) {
+	check := func(final RandomRead[uint32]) {
 		for x := 0; x < 16; x++ {
 			for y := 0; y < 16; y++ {
 				for z := 0; z < 16; z++ {
@@ -42,8 +40,8 @@ func TestCopyFrom(t *testing.T) {
 					} else {
 						v = uint32(x*100 + y*10 + 2*z)
 					}
-					if final.Get(celler.ToSubChunkBlockPos(x, y, z)) != v {
-						t.Errorf("expect %v @ %v, get %v", v, celler.ToSubChunkBlockPos(x, y, z), final.Get(celler.ToSubChunkBlockPos(x, y, z)))
+					if final.Get(At(x, y, z)) != v {
+						t.Errorf("expect %v @ %v, get %v", v, At(x, y, z), final.Get(At(x, y, z)))
 					}
 				}
 			}
@@ -69,11 +67,11 @@ func TestCopyFromPlaceHolder(t *testing.T) {
 		for y := 0; y < 16; y++ {
 			for z := 0; z < 16; z++ {
 				if z%3 == 0 {
-					pa.Set(celler.ToSubChunkBlockPos(x, y, z), uint32(x*100+y*10+z))
+					pa.Set(At(x, y, z), uint32(x*100+y*10+z))
 				} else if z%3 == 1 {
-					pa.Set(celler.ToSubChunkBlockPos(x, y, z), uint32(x*100+y*10-z))
+					pa.Set(At(x, y, z), uint32(x*100+y*10-z))
 				} else {
-					pa.Set(celler.ToSubChunkBlockPos(x, y, z), uint32(x*100+y*10+2*z))
+					pa.Set(At(x, y, z), uint32(x*100+y*10+2*z))
 				}
 			}
 		}

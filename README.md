@@ -1,230 +1,170 @@
 # neomega-celler
 
-`neomega-celler` 围绕 `LayerStorage` 构建面向不同场景的 Minecraft 方块存储，并让这些存储互相转换。`LayerStorage` 是一个子区块内某一类值的存储模型。子区块是 16×16×16 的方块区域。仓库里的其他存储结构都围绕这个模型组织。
+`neomega-celler` 提供 Minecraft Bedrock 和 Java 原生存档的读取、编辑与写入。Bedrock 使用本机目录中的 LevelDB 数据库；Java 使用本机目录或 PackFS 中的 MCA 区域文件。Go 模块名为 `celler`，导入路径使用 `celler/...`。
 
-`LayerStorage` 像网络里的 IP 层，是整个设计的“窄腰”：上面可以封装 Java 存档、Bedrock 数据库和同步机制，下面可以使用复杂的调色板位压缩，中间的接口保持简单、稳定。Go 模块名是 `celler`，导入路径使用 `celler/...`。
+存档先以原始记录或完整 NBT 文档读入，再按需要解释其中的方块和其他数据。编辑一个 section 后，把它写回所属区块，最后保存区块。Section 是 16×16×16 的空间区域。这样的读取方式保留了尚未解释的记录与字段，也让调用者可以直接处理原始数据。
 
-## 为什么需要一个窄腰
+## 从世界文件到层存储
 
-同一份方块数据会以多种形态存在。保存时需要对接 Bedrock 的 LevelDB 数据库或 Java 的 MCA 区域文件。运算时需要方便随机读写的内存数组。方块实体数据很稀疏，适合只保存少量非默认值。同步时又需要把远端的数据落到本地选择的存储实现上。
+两种存档各自提供原生区块模型。内存中的方块层使用 `layer_storage`，它以调色板、平铺数组或稀疏映射保存 4096 个值。
 
-如果这些形态两两对接，每增加一种形态，就要补写多条转换路径。通过 `LayerStorage`，每种形态只需接入同一个模型。磁盘容器可以跨越许多区块，但拆到这里，每一层处理的范围始终是 16×16×16。
-
-这也把问题分成了两部分：围绕同一模型选择合适的存储方案，以及通过 `CopyFrom` 在不同实现之间搬运数据。
-
-## LayerStorage 怎么工作
-
-根包的 [layer_storage.go](layer_storage.go) 定义了这组能力。读取只需要知道默认值，以及哪些位置与默认值不同。写入负责初始化和从其他层复制。随机访问在此基础上提供 `Get`、`Set`，供逐点读取和修改使用。
-
-```go
-type LayerStorageRead[D any] interface {
-    Default() D
-    IterNonDefault(fn func(SubChunkBlockPos, D) (next bool))
-}
-
-type LayerStorageWrite[D any] interface {
-    InitWithDefault(data D)
-    CopyFrom(LayerStorageRead[D])
-}
+```text
+bedrock.World → 本机 LevelDB → 区块记录 → bedrock.Section → 多个方块层
+java.World   → 目录 / PackFS → MCA/MCC → java.Section    → 一个方块层
 ```
 
-“一个默认值 + 所有非默认点”足以描述整层。目标实现先用默认值填满 4096 个位置，再逐点写入差异，就能重建源数据。因此，`CopyFrom` 只需要 `LayerStorageRead[D]`，无需了解源实现的数组、字典或压缩布局。这里复制的是相同值类型 `D` 的数据。值本身的含义需要双方约定一致。
+各包按数据的含义和存放方式划分：
 
-`Palette`、`Plain`、`Map` 的 `CopyFrom` 对已知类型选择专门的路径。例如，`Palette` 到 `Palette` 直接复制压缩数组和调色板。遇到未知类型时，它们用 `InitWithDefault` 和逐点 `Set` 完成通用复制。快路径只影响效率。
+| 包 | 职责 |
+| --- | --- |
+| `celler` | 区块坐标和绝对方块坐标 |
+| `layer_storage` | 独立的 16³ 内存存储及实现之间的复制 |
+| `bedrock` | 原生区块记录、section、多层方块、方块实体、生物群系及 `level.dat` |
+| `bedrock/leveldb` | 使用现有 LevelDB 引擎打开本机数据库，配置 Bedrock 压缩方式 |
+| `java` | 原生区块 NBT、section、世界元数据和维度目录 |
+| `java/region` | MCA 槽位、扇区分配、压缩记录和外置 MCC 文件 |
+| `storage` | 文件后端接口、本机目录与 PackFS 适配 |
 
-因此，新实现只要提供读接口，就能成为现有通用实现的复制来源。它再提供同样的通用 `CopyFrom`，就能接收其他实现的数据。扩展时无需编写两两之间的转换器。只表示统一值的 `PlaceHolder` 有单独的限制，见下文。
+NBT 文档读写使用 `neomega-nbt/presets/v1`。`neomega-blocks/ir` 提供方块名称与属性的文本表示。`neomega-packfs` 提供容器、提交和快照。
 
-## 窄腰之下：按场景选择实现
+## 方块怎样表示
 
-方块实体的结构化数据在这里用 SNBT 保存，即 Minecraft NBT 数据格式的文本表示。为了在相同的空间范围内选择不同的时间、内存开销，[layer_storage](layer_storage) 提供四种实现：
+层内坐标使用 `layer_storage.Position`。`layer_storage.At(x, y, z)` 取坐标的低四位，也适用于负数绝对坐标。平铺数组采用 `(x << 8) | (z << 4) | y`，即 Y 最快变化。各存档编解码器负责磁盘布局与该内存布局之间的排列。
 
-- `Palette` 用调色板和位压缩紧凑保存重复值，与 Bedrock、Java 的磁盘调色板结构对应。
-- `Plain` 用平铺数组保存 4096 个值，可以直接按下标随机读写，适合运算。
-- `Map` 只保存非默认点，适合方块实体 SNBT 等稀疏数据。
-- `PlaceHolder` 用一个值表示整层，两个存档适配器都用它表示统一为 0 的附加值层。
+Java 的方块层是 `Palette[ir.IRBlock]`。属性保持 Java 的字符串表示，例如 `minecraft:oak_slab ["type"="bottom","waterlogged"="true"]`。
 
-`PlaceHolder.Set` 不改变数据。它的 `CopyFrom` 只取源默认值，因此无法保留非均匀层的逐点差异。需要保存这些差异时，应选择其他实现。
+Bedrock 的每一层是 `Palette[bedrock.Block]`。`Block.State` 保存 IR，`Block.Version` 保存该 palette 条目的版本号。版本号属于条目，同一个 section 内可以出现不同版本。`Section.Layers` 按磁盘顺序保存所有层，层数来自记录本身。
 
-## 窄腰之上：组合、保存和同步
+解码得到的 IR 已经 tidy，即名称和属性具有规范的文本形式。调用者新增方块时应提供有效、已经 tidy 的 IR。方块名称与状态直接来自存档，调色板中可以保留自定义方块。Palette 的第一个值是默认值，可能是任意方块。
 
-`SubChunk` 描述一个子区块的全部方块信息。它没有把每个格子的所有信息打包成一个值，而是按信息种类拆成三层 `LayerStorage`：方块 ID、方块实体 SNBT 和附加值。这与 Bedrock 和 Java 存档一致，普通方块和带 NBT 的方块本来就分开存放。
+`layer_storage` 的四种实现适用于不同访问方式：
 
-拆开的好处是每层可以按自己的疏密选择实现。方块 ID 每个格子都有，适合 `Palette`。SNBT 只出现在少数方块上，适合 `Map`。附加值层预留给将来非常稀疏的方块注释信息，目前两个适配器都用 `PlaceHolder` 填 0。
+- `Palette`：重复值较多时，用局部调色板和压缩索引减少内存。
+- `Plain`：平铺保存 4096 个值，适合连续运算。
+- `Map`：只保存非默认位置，适合稀疏数据。
+- `PlaceHolder`：用一个值表示均匀层。其 `Set` 不改变数据，`CopyFrom` 只取得源默认值。
 
-`subchunk.Simple` 的三个层类型参数都只要求满足 `celler.Storage`，即可随机读写的 `LayerStorage`，所以每层用哪种实现由实例化的一方决定。`SubChunk` 还带有版本号和元数据，供同步判断新旧。
+`CopyFrom` 复制层数据。`ConvertPalette` 生成独立的索引数组并映射 palette 值，因此修改结果不会影响来源。层存储接受可比较的 Go 值，包括 Bedrock 的方块状态与版本组合。
 
-为了管理多个子区块，`SubChunkStorage` 按 `SubChunkPos` 存取它们。这个位置由水平区块坐标和子区块高度组成。`subchunk_storage/bedrock` 通过 `kvdb` 对接 LevelDB。`subchunk_storage/java` 通过 `subchunk_storage/java/mca` 对接 MCA 区域文件。两个适配器各自处理自己的格式与层数据之间的编解码，因此 Java 和 Bedrock 之间无需再写一套专用的逐块转换逻辑。
+## Bedrock：按记录读取和编辑
 
-同步也使用这条边界。`SubChunkChange` 可以携带完整的 `Base` 子区块或逐块增量。`subchunk.Simple.ApplyChange` 接收比本地版本更新的 `Base` 时，会复制版本号和元数据，并对三层分别调用 `CopyFrom`。远端的层实现可以与本地不同。
+`bedrock.Open` 接收包含 `db` 和 `level.dat` 的世界目录。维度使用原生数值 ID。`ReadChunk` 返回自有字节切片，`Chunk.Records` 按坐标和维度之后的键后缀保存记录。
 
-需要压缩传输方块命令时，`frontend/replica` 提供坐标与 `uint16` 值的命令编解码。它目前是独立的传输工具，尚未直接接入 `SubChunkChange`。
-
-## 格式之间的转换：Java → Bedrock
-
-转换只需遍历源子区块，把三层复制到目标实现，再写回目标存储。反方向也遵循相同的步骤。默认 Java 适配器和 Bedrock 转换器都使用规范化 Bedrock 方块哈希，因此默认配置下复制 ID 时无需再次翻译。
-
-下面的完整程序从 Java 的 `region` 目录读取子区块，并写入内存 LevelDB。运行环境和命令见“运行例子”。
+`Section(y)` 只解码指定高度的 section。修改返回的层后，调用 `SetSection` 将结果放回区块。`WriteChunk` 用一个 LevelDB batch 替换该区块已识别的记录集合；未改动记录沿用原有字节，其他数据库键保持原值。`DeleteSection` 删除一条 section 记录，`DeleteChunk` 删除该区块已识别的记录。
 
 ```go
-package main
+world, err := bedrock.Open(directory, bedrock.Options{})
+if err != nil {
+    return err
+}
+defer world.Close()
 
-import (
-    "fmt"
-    "log"
-    "os"
+chunk, err := world.ReadChunk(0, celler.ChunkPos{X: -2, Z: 3})
+if err != nil {
+    return err
+}
+section, err := chunk.Section(-4)
+if err != nil {
+    return err
+}
+// block 的 State 与 Version 由调用者按来源版本提供。
+section.Layers[0].Blocks.Set(layer_storage.At(1, 2, 3), block)
+if err := chunk.SetSection(section); err != nil {
+    return err
+}
+return world.WriteChunk(chunk, &opt.WriteOptions{Sync: true})
+```
 
-    "celler"
-    "celler/kvdb"
-    "celler/subchunk_storage/bedrock"
-    "celler/subchunk_storage/java"
-    "celler/subchunk_storage/java/mca"
-    "neomega-blocks/ir"
+这里的 `opt` 来自 `github.com/df-mc/goleveldb/leveldb/opt`。`Sync: true` 要求该 batch 持久化后返回。传入 `nil` 使用引擎默认写入策略。世界元数据通过 `ReadLevel`、`WriteLevel` 访问，并保留文件头版本。
+
+`ScanChunks` 基于数据库快照遍历区块。回调取得的字节在迭代器前进后仍然有效，也可以在回调中写入世界。数据库的其他记录、范围迭代、快照和批量操作可直接通过 `World.DB` 使用。
+
+方块实体通过 `BlockEntities` 和 `SetBlockEntities` 读写，保留其原始位置、ID 和 NBT 类型。`Biomes2D` 对应二维高度与生物群系记录；`Biomes3D` 保留 16³ 数值 palette 和“沿用上一 section”的标记。三维记录首个 section 的 Y 由维度高度定义决定，记录本身不携带它。
+
+## Java：编辑完整 NBT 中的 section
+
+`java.OpenDirectory` 打开本机世界目录。`java.Open` 接收文件后端；可写后端实现 `storage.Writer`，只读后端可以是 `os.DirFS` 或 PackFS 快照视图。
+
+世界中的维度以相对目录表示：主世界为 `java.Overworld`，下界为 `java.Nether`，末地为 `java.End`。自定义维度使用 `java.Dimension("dimensions/namespace/name")`。`Terrain`、`Entities`、`POI` 分别选择对应的 region 目录。
+
+`ReadChunk` 返回完整的 `Chunk.NBT`。`Section(y)` 解码方块与生物群系；修改后调用 `SetSection`。它会更新该 section 的已解释字段，并保留其他 NBT。方块实体和其他区块数据仍在 `Chunk.NBT.Value` 中，使用原生字段名称与类型访问。
+
+```go
+chunk, err := world.ReadChunk(java.Overworld, position)
+if err != nil {
+    return err
+}
+section, err := chunk.Section(-4)
+if err != nil {
+    return err
+}
+section.Blocks.Set(layer_storage.At(1, 2, 3), ir.IRBlock("minecraft:stone []"))
+if err := chunk.SetSection(section); err != nil {
+    return err
+}
+if err := world.WriteChunk(java.Overworld, chunk); err != nil {
+    return err
+}
+return world.Commit()
+```
+
+`Section.Blocks == nil` 表示缺少方块字段，例如仅保存光照的 section。Java 生物群系使用独立的 4×4×4 采样数组，顺序是 Y-Z-X。`SectionYs` 从实际记录枚举高度。
+
+`ReadRaw` 和 `WriteRaw` 访问带时间戳的压缩记录，适合保留现有压缩数据，或在计算任务中提前完成压缩。`Scan` 枚举实际存在的槽位。`ReadLevel` 和 `WriteLevel` 处理 gzip 压缩的 `level.dat`。
+
+`NewChunk` 只初始化坐标、格式版本和 section 列表。创建完整区块时，由调用者提供目标存档需要的生成状态等字段。
+
+## Java 存档放入 PackFS
+
+PackFS 内部保持原有世界目录结构。容器根目录可以直接包含 `level.dat`、`region`、`entities`、`poi` 和各维度目录。使用 `storage.Pack{PackFS: container}` 打开可写世界：
+
+```go
+world, err := java.Open(
+    storage.Pack{PackFS: container},
+    java.Options{MaxOpenRegions: 16},
 )
-
-func copyJavaToBedrock(
-    source *java.JavaStorageReadOnly,
-    target *bedrock.BedrockStorageReadWrite[uint32],
-) int {
-    copied := 0
-    source.IterAll(func(pos celler.SubChunkPos) bool {
-        src := source.Get(pos)
-        if src == nil || src.Version() == 0 {
-            return true
-        }
-        dst := target.GetOrEmpty(pos)
-        dst.BlockIDStorage.CopyFrom(src.BlockID())
-        dst.BlockAttachStorage.CopyFrom(src.BlockAttach())
-        dst.BlockSNBTStorage.CopyFrom(src.BlockSNBT())
-        // Set 将版本号 0 当作删除，所以也要复制源的非零版本号。
-        dst.CurrentVersion = src.Version()
-        target.Set(pos, dst)
-        copied++
-        return true
-    })
-    return copied
-}
-
-func main() {
-    if len(os.Args) != 2 {
-        log.Fatal("usage: convert <java-region-directory>")
-    }
-    mcaDB, err := mca.NewReadOnlyMCAKvFromDir(os.Args[1])
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer mcaDB.Close()
-    source := java.NewReadOnlyJavaStorage(mcaDB)
-
-    db, err := kvdb.NewReadWriteLevelDB("")
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer db.Close()
-    air := ir.IRBlock("minecraft:air []").Hash()
-    target := bedrock.NewReadWriteBedrockStorage(
-        db,
-        0, // Bedrock 主世界维度。
-        air,
-        bedrock.DefaultBlockDecode,
-        bedrock.DefaultBlockEncode,
-    )
-    fmt.Printf("copied %d subchunks\n", copyJavaToBedrock(source, target))
-}
 ```
 
-Java 的 `IterAll` 为每个磁盘区块枚举 `Y = -4..19` 的候选位置，所以代码通过 `Get` 跳过不存在的子区块。`GetOrEmpty` 在目标缺失时创建版本号为 0 的子区块，在目标已有数据时返回现有数据。逐层 `CopyFrom` 会覆盖目标层的内容。
+`World` 借用容器。调用者负责打开和关闭容器，以及创建、读取和恢复快照。region 缓存有容量限制，默认最多保留 16 个打开的文件。
 
-同步场景可以用 `ApplyChange(celler.SubChunkChange[uint32, uint32]{Base: src})` 完成三层复制，并携带版本号和元数据。但它只接受版本号更大的 `Base`。存档转换要覆盖已有目标时，直接复制三层可以避免同步的新旧判断。存档适配器不会持久化这里的同步版本号和元数据。
+写入过程分为两个层次：
 
-## 方块 ID 从哪里来
+1. `world.Flush()` 将所有 region 的数据和头表写入文件后端。
+2. `world.Commit()` 先执行 Flush，再提交后端。PackFS 此时发布整组文件的新状态；目录后端同步修改过的文件及父目录。
 
-基础类型允许调用者选择自己的 `~uint32` 方块 ID。默认 Bedrock 转换器和 Java 适配器使用 `neomega-blocks/presets/block-converts/v1` 的规范化 Bedrock 方块哈希。它不是游戏 runtime ID，也不能直接当作旧版 `UIBI` 使用。
+`world.Close()` 刷新并释放 region 句柄。需要明确持久化时，应先成功调用 `world.Commit()`。本机目录的同步不具有 PackFS 的多文件原子发布能力。
 
-输入方块缺少属性时，默认转换会使用 `neomega-blocks` 的 canonical 逻辑补齐属性，再获得规范化方块的哈希。NBT 和 SNBT 的读写使用 `neomega-nbt/presets/v1`。需要自己的 ID 体系时，Bedrock 构造函数可接收自定义的 `BlockDecode`、`BlockEncode` 回调，以转换磁盘里的单个方块 NBT。
+创建快照前调用 `world.Flush()`，然后调用 `container.Snapshot(name)`，因为 Snapshot 自身会提交容器。关闭容器之前先关闭 world；PackFS 的 Close 也会提交容器。恢复快照之前关闭 world 及其他文件句柄，恢复后重新打开 world，避免继续使用旧 region 头表。
 
-## 运行例子
+一个 world 及其文件后端由同一个 goroutine 使用。区块解码、计算和压缩可以在独立任务中完成，再把独占的结果交给文件所有者写入。
 
-本地开发需要 Go 1.25.5 或以上。将 `neomega-celler`、`neomega-blocks`、`neomega-nbt` 放在同一级目录，供 `go.mod` 中的 `replace` 使用。如果使用父目录的 `go.work`，需要把这三个模块都加入工作区。
+## 格式与错误约定
 
-要运行上面的转换程序，将代码保存为 `/tmp/celler-convert.go`，在仓库根目录执行：
+Bedrock 方块编解码支持 persistent subchunk 版本 1、8、9，以及带 `name`、`states`、`version` 的 palette 条目。区块记录层可以保留原始字节，具体内容在请求解码时检查。
+
+Java section 编辑支持现代 `sections` / `block_states` / `biomes` 结构及 64 位整数内不跨字打包的 palette。Region 层读取 gzip、zlib、未压缩及 Java LZ4Block 压缩记录；普通写入采用 zlib，大记录使用 `.mcc` 外置文件。原始记录接口可以保留已有压缩内容。
+
+不存在的区块或 section 返回 `fs.ErrNotExist`。全空气是一个正常的数据值。损坏记录与不支持的编码返回错误，不通过默认方块掩盖问题。NBT 文档编辑保留根名和标签类型；重新编码 Go map 后，Compound 字段顺序可能变化。
+
+读取后返回的数据由调用者持有。提取 section 后，应通过 `SetSection` 应用对方块层和生物群系的修改。嵌套 NBT 使用普通 Go map、slice 和 array；同时处理同一份文档时，由调用者安排所有权。
+
+## 运行示例与验收
+
+本地开发使用 Go 1.25.5。将 `neomega-celler`、`neomega-blocks`、`neomega-nbt` 和 `neomega-packfs` 放在同级目录，供模块的本地替换引用。
+
+以下命令在父工作区目录执行。坐标参数是区块坐标。示例只读取已有存档并打印 section 信息：
 
 ```sh
-go run /tmp/celler-convert.go /path/to/java-world/region
+go run ./neomega-celler/examples/inspect-bedrock \
+  -world /path/to/bedrock-world -dimension 0 -x -2 -z 3
+
+go run ./neomega-celler/examples/inspect-java \
+  -world /path/to/java-world -dimension . -x -2 -z 3
+
+go run ./neomega-celler/examples/inspect-java \
+  -pack /path/to/world.pack -dimension DIM-1 -x -2 -z 3
+
+./check.sh neomega-nbt neomega-celler neomega-viewer neomega-converter
 ```
 
-内存 LevelDB 会随程序结束释放。需要保存到磁盘时，将 `kvdb.NewReadWriteLevelDB("")` 的空路径换成目标数据库目录。该程序复制的是适配器支持的方块数据，完整存档的保留范围见“适配器的局限”。
-
-如果想先验证单个方块的保存和读回，可以使用下面的内存 LevelDB 例子。它通过 `ChangeBlock` 修改数据并推进版本号，再经过 Bedrock 编解码写入和读取。
-
-```go
-package main
-
-import (
-    "fmt"
-    "log"
-
-    "celler"
-    "celler/kvdb"
-    "celler/subchunk_storage/bedrock"
-    "neomega-blocks/ir"
-    blocks "neomega-blocks/presets/block-converts/v1"
-)
-
-func main() {
-    db, err := kvdb.NewReadWriteLevelDB("")
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer db.Close()
-
-    air := ir.IRBlock("minecraft:air []").Hash()
-    stone, ok := blocks.ConvertFromBedrock(ir.IRBlock("minecraft:stone []"))
-    if !ok {
-        log.Fatal("stone is missing from the block table")
-    }
-    storage := bedrock.NewReadWriteBedrockStorage(
-        db,
-        0,
-        air,
-        bedrock.DefaultBlockDecode,
-        bedrock.DefaultBlockEncode,
-    )
-    position := celler.SubChunkPos{ChunkPos: celler.ChunkPos{X: -2, Z: 3}, Y: -4}
-    local := celler.ToSubChunkBlockPos(1, 2, 3)
-    chunk := storage.GetOrEmpty(position)
-    change := celler.BlockChange[uint32, uint32]{}.SetPos(local).SetID(stone.Hash())
-    chunk.ChangeBlock(change)
-    storage.Set(position, chunk)
-    fmt.Println(storage.Get(position).BlockID().Get(local) == stone.Hash())
-}
-```
-
-将代码保存为 `/tmp/celler-basic.go`，在仓库根目录执行：
-
-```sh
-go run /tmp/celler-basic.go
-```
-
-最后一行应为 `true`。
-
-写入 Java 存档时，用 `mca.NewReadWriteMCAKvFromDir` 打开 `region` 目录，再交给 `java.NewReadWriteJavaStorage`。修改子区块后必须调用 `Set` 标记待写入数据。结束时先调用 Java 存储的 `Close` 刷出缓存，再关闭 MCA 数据库。传入的底层数据库由调用者管理。
-
-## 适配器的局限
-
-这些适配器面向方块和方块实体数据。Java 编码器会重建区块 NBT，丢失原有的生物群系、光照、实体和计划刻等信息。Bedrock 解码器只保留第一层方块，写入时也只生成这一层。因此，读写往返不是完整存档的无损编辑。
-
-共享的方块 ID 约定解决了层数据复制时的 ID 对接，但两版的方块实体 SNBT 仍有各自的语义。直接复制 SNBT 不等于完成两版方块实体格式的转换。
-
-旧存储接口没有统一的错误返回通道。例如，读取失败可能表现为没有数据。需要检查原始解码错误时，应直接使用相应的 `ChunkDecoder`。Java 写入者的 `Close` 会返回写出错误，调用方需要检查。
-
-## 测试
-
-在仓库根目录执行：
-
-```sh
-go test ./...
-go test -race ./...
-go vet ./...
-```
-
-测试自行生成临时 LevelDB、MCA 和区块数据，无需外部世界样本。测试覆盖方块与 SNBT 往返、负坐标、层实现之间的复制、调色板、MCA 缓存淘汰及底层存储。
+测试自行建立临时存档，覆盖 Bedrock 多层与条目版本、Java 原生 palette、未知 NBT 字段保留、负坐标、MCC 内外切换、PackFS 快照及导出目录后重新读取。

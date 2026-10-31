@@ -1,8 +1,6 @@
 package layer_storage
 
-import "celler/storage_io"
-
-type Maker[T storage_io.Number | ~string] struct {
+type Maker[T comparable] struct {
 	defaultV T
 }
 
@@ -30,6 +28,6 @@ func (m Maker[T]) Map() *Map[T] {
 	return storage
 }
 
-func New[T storage_io.Number | ~string](v T) Maker[T] {
+func New[T comparable](v T) Maker[T] {
 	return Maker[T]{v}
 }

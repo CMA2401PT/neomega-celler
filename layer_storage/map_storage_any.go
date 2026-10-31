@@ -1,13 +1,8 @@
 package layer_storage
 
-import (
-	"celler"
-	"celler/storage_io"
-	"fmt"
-	"io"
-)
+import ()
 
-type Map[T storage_io.Number | ~string] struct {
+type Map[T comparable] struct {
 	DefaultValue T
 	Data         map[uint16]T
 }
@@ -16,15 +11,15 @@ func (Map[T]) Make() *Map[T] {
 	return &Map[T]{}
 }
 
-func (s *Map[T]) posToIdx(pos celler.SubChunkBlockPos) uint16 {
+func (s *Map[T]) posToIdx(pos Position) uint16 {
 	return (uint16(pos.X&0xf) << 8) | (uint16(pos.Z&0xf) << 4) | uint16(pos.Y&0xf)
 }
 
-func (s *Map[T]) idxToPos(i uint16) celler.SubChunkBlockPos {
-	return celler.ToSubChunkBlockPos(i>>8&0xf, i&0xf, i>>4&0xf)
+func (s *Map[T]) idxToPos(i uint16) Position {
+	return At(i>>8&0xf, i&0xf, i>>4&0xf)
 }
 
-func (s *Map[T]) IterNonDefault(fn func(celler.SubChunkBlockPos, T) (next bool)) {
+func (s *Map[T]) IterNonDefault(fn func(Position, T) (next bool)) {
 	if s.Data == nil {
 		return
 	}
@@ -35,7 +30,7 @@ func (s *Map[T]) IterNonDefault(fn func(celler.SubChunkBlockPos, T) (next bool))
 	}
 }
 
-func (s *Map[T]) Get(pos celler.SubChunkBlockPos) T {
+func (s *Map[T]) Get(pos Position) T {
 	if value, ok := s.Data[s.posToIdx(pos)]; ok {
 		return value
 	}
@@ -51,7 +46,7 @@ func (s *Map[T]) InitWithDefault(data T) {
 	s.Data = map[uint16]T{}
 }
 
-func (s *Map[T]) Set(pos celler.SubChunkBlockPos, b T) {
+func (s *Map[T]) Set(pos Position, b T) {
 	if b == s.DefaultValue {
 		if s.Data != nil {
 			delete(s.Data, s.posToIdx(pos))
@@ -91,7 +86,7 @@ func (s *Map[T]) Same() (d T, allSame bool) {
 	return firstV, true
 }
 
-func (s *Map[T]) CopyFrom(src celler.LayerStorageRead[T]) {
+func (s *Map[T]) CopyFrom(src Read[T]) {
 	if placeHolderSrc, ok := src.(*PlaceHolder[T]); ok {
 		s.InitWithDefault(placeHolderSrc.Default())
 		return
@@ -122,7 +117,6 @@ func (s *Map[T]) CopyFrom(src celler.LayerStorageRead[T]) {
 		return
 	}
 	{
-		fmt.Printf("slow copy from: %T\n", src)
 		defaultV := src.Default()
 		s.InitWithDefault(defaultV)
 		for p, v := range src.IterNonDefault {
@@ -132,18 +126,8 @@ func (s *Map[T]) CopyFrom(src celler.LayerStorageRead[T]) {
 	}
 }
 
-func MakeMapStorage[T storage_io.Number | ~string](defaultV T) *Map[T] {
+func MakeMapStorage[T comparable](defaultV T) *Map[T] {
 	storage := &Map[T]{}
 	storage.InitWithDefault(defaultV)
 	return storage
-}
-
-func (s *Map[T]) Dump(w io.Writer) {
-	storage_io.WriteValue(w, s.DefaultValue)
-	storage_io.WriteMap(w, s.Data, true)
-}
-
-func (s *Map[B]) Load(r io.Reader) {
-	s.DefaultValue = storage_io.ReadValue[B](r)
-	s.Data = storage_io.ReadMap[uint16, B, map[uint16]B](r)
 }

@@ -1,0 +1,221 @@
+package bedrock
+
+import (
+	"bytes"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+
+	"celler"
+	native "celler/bedrock/leveldb"
+	"celler/storage"
+	"github.com/df-mc/goleveldb/leveldb"
+	"github.com/df-mc/goleveldb/leveldb/opt"
+	"github.com/df-mc/goleveldb/leveldb/util"
+	nbt "neomega-nbt/presets/v1"
+)
+
+type Options struct{ ReadOnly bool }
+
+// World owns its filesystem LevelDB engine. DB exposes native batches,
+// snapshots and non-chunk records; Files contains level.dat and auxiliary files.
+type World struct {
+	DB        *leveldb.DB
+	Files     fs.FS
+	directory *storage.Directory
+	readOnly  bool
+	closed    bool
+}
+
+func Open(directory string, options Options) (*World, error) {
+	w := &World{readOnly: options.ReadOnly}
+	if options.ReadOnly {
+		w.Files = os.DirFS(directory)
+	} else {
+		var err error
+		w.directory, err = storage.OpenDirectory(directory)
+		if err != nil {
+			return nil, err
+		}
+		w.Files = w.directory
+	}
+	db, err := native.Open(filepath.Join(directory, "db"), options.ReadOnly)
+	if err != nil {
+		return nil, err
+	}
+	w.DB = db
+	return w, nil
+}
+
+func (w *World) ReadChunk(dimension int32, pos celler.ChunkPos) (*Chunk, error) {
+	if w.closed {
+		return nil, fs.ErrClosed
+	}
+	c := NewChunk(pos, dimension)
+	iter := w.DB.NewIterator(util.BytesPrefix(ChunkPrefix(pos, dimension)), nil)
+	defer iter.Release()
+	for iter.Next() {
+		p, d, suffix, ok := ParseChunkKey(iter.Key())
+		if ok && p == pos && d == dimension {
+			c.Records[suffix] = bytes.Clone(iter.Value())
+		}
+	}
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	if len(c.Records) == 0 {
+		return nil, fs.ErrNotExist
+	}
+	return c, nil
+}
+
+// WriteChunk atomically replaces this chunk's recognized record set, preserving
+// all other database keys. WriteOptions.Sync selects per-batch durability.
+func (w *World) WriteChunk(c *Chunk, options *opt.WriteOptions) error {
+	if w.closed {
+		return fs.ErrClosed
+	}
+	if w.readOnly {
+		return fs.ErrPermission
+	}
+	prefix := ChunkPrefix(c.Pos, c.Dimension)
+	batch := new(leveldb.Batch)
+	for suffix, value := range c.Records {
+		key := append(bytes.Clone(prefix), []byte(suffix)...)
+		p, d, s, ok := ParseChunkKey(key)
+		if !ok || p != c.Pos || d != c.Dimension || s != suffix {
+			return fmt.Errorf("invalid chunk record suffix %x", suffix)
+		}
+		batch.Put(key, value)
+	}
+	iter := w.DB.NewIterator(util.BytesPrefix(prefix), nil)
+	for iter.Next() {
+		p, d, suffix, ok := ParseChunkKey(iter.Key())
+		if ok && p == c.Pos && d == c.Dimension {
+			if _, keep := c.Records[suffix]; !keep {
+				batch.Delete(iter.Key())
+			}
+		}
+	}
+	err := iter.Error()
+	iter.Release()
+	if err != nil {
+		return err
+	}
+	return w.DB.Write(batch, options)
+}
+func (w *World) DeleteChunk(dimension int32, pos celler.ChunkPos, options *opt.WriteOptions) error {
+	return w.WriteChunk(NewChunk(pos, dimension), options)
+}
+
+// ScanChunks reads a consistent database snapshot. It buffers one X/Z group's
+// dimensions, cloning record bytes before the underlying iterator advances.
+func (w *World) ScanChunks(fn func(*Chunk) error) error {
+	if w.closed {
+		return fs.ErrClosed
+	}
+	snapshot, err := w.DB.GetSnapshot()
+	if err != nil {
+		return err
+	}
+	defer snapshot.Release()
+	iter := snapshot.NewIterator(nil, nil)
+	defer iter.Release()
+	var current celler.ChunkPos
+	have := false
+	group := map[int32]*Chunk{}
+	flush := func() error {
+		dims := make([]int32, 0, len(group))
+		for d := range group {
+			dims = append(dims, d)
+		}
+		sort.Slice(dims, func(i, j int) bool { return dims[i] < dims[j] })
+		for _, d := range dims {
+			if err := fn(group[d]); err != nil {
+				return err
+			}
+		}
+		clear(group)
+		return nil
+	}
+	for iter.Next() {
+		pos, dim, suffix, ok := ParseChunkKey(iter.Key())
+		if !ok {
+			continue
+		}
+		if have && pos != current {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		current = pos
+		have = true
+		c := group[dim]
+		if c == nil {
+			c = NewChunk(pos, dim)
+			group[dim] = c
+		}
+		c.Records[suffix] = bytes.Clone(iter.Value())
+	}
+	if err := iter.Error(); err != nil {
+		return err
+	}
+	return flush()
+}
+
+// Level retains the Bedrock level.dat header version and little-endian root.
+type Level struct {
+	Version uint32
+	NBT     nbt.Document
+}
+
+func (w *World) ReadLevel() (Level, error) {
+	if w.closed {
+		return Level{}, fs.ErrClosed
+	}
+	data, err := fs.ReadFile(w.Files, "level.dat")
+	if err != nil {
+		return Level{}, err
+	}
+	if len(data) < 8 || uint64(binary.LittleEndian.Uint32(data[4:])) != uint64(len(data)-8) {
+		return Level{}, fmt.Errorf("invalid level.dat length")
+	}
+	doc, err := nbt.DecodeDocument(data[8:], nbt.EncodingLittleEndian)
+	return Level{Version: binary.LittleEndian.Uint32(data), NBT: doc}, err
+}
+func (w *World) WriteLevel(level Level) error {
+	if w.closed {
+		return fs.ErrClosed
+	}
+	if w.readOnly {
+		return fs.ErrPermission
+	}
+	data, err := nbt.EncodeDocument(level.NBT, nbt.EncodingLittleEndian)
+	if err != nil {
+		return err
+	}
+	header := binary.LittleEndian.AppendUint32(nil, level.Version)
+	header = binary.LittleEndian.AppendUint32(header, uint32(len(data)))
+	if err = storage.WriteFile(w.directory, "level.dat.tmp", append(header, data...)); err != nil {
+		return err
+	}
+	if err = w.directory.Rename("level.dat.tmp", "level.dat"); err != nil {
+		return err
+	}
+	return w.directory.Commit()
+}
+func (w *World) Close() error {
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+	err := w.DB.Close()
+	if w.directory != nil {
+		err = errors.Join(err, w.directory.Commit())
+	}
+	return err
+}

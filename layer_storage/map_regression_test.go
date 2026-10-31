@@ -1,14 +1,12 @@
 package layer_storage
 
 import (
-	"bytes"
-	"celler"
 	"testing"
 )
 
 func TestMapDefaultAndUniformity(t *testing.T) {
 	s := MakeMapStorage[uint32](100)
-	p := celler.ToSubChunkBlockPos(2, 3, 4)
+	p := At(2, 3, 4)
 	if got := s.Get(p); got != 100 {
 		t.Fatalf("missing entry = %d, want 100", got)
 	}
@@ -23,7 +21,7 @@ func TestMapDefaultAndUniformity(t *testing.T) {
 	for x := 0; x < 16; x++ {
 		for y := 0; y < 16; y++ {
 			for z := 0; z < 16; z++ {
-				s.Set(celler.ToSubChunkBlockPos(x, y, z), 7)
+				s.Set(At(x, y, z), 7)
 			}
 		}
 	}
@@ -31,14 +29,12 @@ func TestMapDefaultAndUniformity(t *testing.T) {
 		t.Fatalf("filled: (%d, %v)", got, same)
 	}
 	s.Set(p, 100)
-	var buf bytes.Buffer
-	s.Dump(&buf)
 	var loaded Map[uint32]
-	loaded.Load(&buf)
+	loaded.CopyFrom(s)
 	if loaded.Get(p) != 100 {
-		t.Fatal("default lost after dump/load")
+		t.Fatal("default lost after copy")
 	}
 	if _, same := loaded.Same(); same {
-		t.Fatal("one default position lost after dump/load")
+		t.Fatal("one default position lost after copy")
 	}
 }
