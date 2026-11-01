@@ -108,3 +108,44 @@ func TestSinglePaletteAndMalformedData(t *testing.T) {
 		t.Fatal("accepted out-of-range index")
 	}
 }
+
+func TestBlockEntities(t *testing.T) {
+	chunk := NewChunk(celler.ChunkPos{X: -2, Z: 3}, 4189)
+	for _, value := range []any{nil, []byte{}, []int32{}, []string{}, []nbt.Compound{}} {
+		if value == nil {
+			delete(chunk.NBT.Value, "block_entities")
+		} else {
+			chunk.NBT.Value["block_entities"] = value
+		}
+		entities, issues, err := chunk.BlockEntities()
+		if err != nil || len(entities) != 0 || len(issues) != 0 {
+			t.Fatalf("empty list %T: %v %v %v", value, entities, issues, err)
+		}
+	}
+	for _, value := range []any{nbt.Compound{}, []byte{1}, []string{"entity"}, nbt.Array([]int32{})} {
+		chunk.NBT.Value["block_entities"] = value
+		if _, _, err := chunk.BlockEntities(); err == nil {
+			t.Fatalf("accepted non-compound list %T", value)
+		}
+	}
+	valid := nbt.Compound{"x": int32(-17), "y": int32(-65), "z": int32(48), "custom": "keep"}
+	chunk.NBT.Value["block_entities"] = []nbt.Compound{
+		{"x": int32(-32), "y": int64(1), "z": int32(48)},
+		valid,
+		{"x": int32(-16), "y": int32(0), "z": int32(48)},
+		{"x": int32(-32), "y": int32(0)},
+		{"id": "example:other", "x": int32(-32), "y": int32(200), "z": int32(63)},
+	}
+	entities, issues, err := chunk.BlockEntities()
+	if err != nil || len(entities) != 2 || len(issues) != 3 {
+		t.Fatalf("entities=%v issues=%v err=%v", entities, issues, err)
+	}
+	if entities[0].Pos != (celler.BlockPos{X: -17, Y: -65, Z: 48}) || !reflect.DeepEqual(entities[0].NBT, valid) {
+		t.Fatal("absolute position or native NBT changed", entities[0])
+	}
+	for i, index := range []int{0, 2, 3} {
+		if issues[i].Index != index || issues[i].Err == nil {
+			t.Fatal(issues)
+		}
+	}
+}

@@ -43,6 +43,54 @@ func (c *Chunk) Position() (celler.ChunkPos, error) {
 	return celler.ChunkPos{X: x, Z: z}, nil
 }
 
+type BlockEntity struct {
+	// 保留绝对坐标和原始 NBT，调用方可按自己的 section 或实体类型组织数据。
+	Pos celler.BlockPos
+	NBT nbt.Compound
+}
+
+type BlockEntityIssue struct {
+	// 单项错误不阻止读取同一区块中的其他实体，Index 对应原列表下标。
+	Index int
+	Err   error
+}
+
+func (c *Chunk) BlockEntities() ([]BlockEntity, []BlockEntityIssue, error) {
+	// 列表损坏与单项坐标损坏分开返回，便于消费者保留可用的实体。
+	value, exists := c.NBT.Value["block_entities"]
+	if !exists {
+		return nil, nil, nil
+	}
+	values, ok := nbt.Compounds(value)
+	if !ok {
+		return nil, nil, fmt.Errorf("block_entities must be a compound list (%T)", value)
+	}
+	if len(values) == 0 {
+		return nil, nil, nil
+	}
+	chunk, err := c.Position()
+	if err != nil {
+		return nil, nil, err
+	}
+	var entities []BlockEntity
+	var issues []BlockEntityIssue
+	for index, value := range values {
+		x, xOK := value["x"].(int32)
+		y, yOK := value["y"].(int32)
+		z, zOK := value["z"].(int32)
+		pos := celler.BlockPos{X: x, Y: y, Z: z}
+		if !xOK || !yOK || !zOK || pos.Chunk() != chunk {
+			issues = append(issues, BlockEntityIssue{
+				Index: index,
+				Err:   fmt.Errorf("block entity requires Int x/y/z inside its chunk"),
+			})
+			continue
+		}
+		entities = append(entities, BlockEntity{Pos: pos, NBT: value})
+	}
+	return entities, issues, nil
+}
+
 // Section contains one block palette and 4×4×4 biome samples in Y-Z-X order.
 // Nil Blocks or Biomes means that field is absent, e.g. a light-only section.
 // NBT retains the section's other fields, including light arrays.
