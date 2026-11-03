@@ -6,10 +6,12 @@ import (
 	"io/fs"
 	"maps"
 	"math/bits"
+	"strconv"
 
 	"celler"
 	"celler/layer_storage"
 	"neomega-blocks/ir"
+	java_blocks "neomega-blocks/presets/java/v1"
 	encoder_go "neomega-nbt/encoder-go-object"
 	nbt "neomega-nbt/presets/v1"
 )
@@ -101,6 +103,8 @@ type Section struct {
 	NBT     nbt.Compound
 	entries []nbt.Compound
 	states  []ir.IRBlock
+	// 现代条目省略的属性来自 Java 预置默认值；写回仍使用 id/properties。
+	modernPalette bool
 }
 
 func (c *Chunk) sectionList() ([]nbt.Compound, error) {
@@ -192,6 +196,7 @@ func (c *Chunk) DeleteSection(y int32) error {
 }
 
 func decodeSection(value nbt.Compound) (*Section, error) {
+	// 将存档调色板还原成完整方块状态，同时保留原条目供未修改状态写回。
 	y, ok := value["Y"].(int8)
 	if !ok {
 		return nil, fmt.Errorf("section requires Byte Y")
@@ -203,25 +208,56 @@ func decodeSection(value nbt.Compound) (*Section, error) {
 			return nil, fmt.Errorf("block_states must be a compound")
 		}
 		entries, ok := nbt.Compounds(states["palette"])
+		if names, compact := states["palette"].([]string); compact {
+			entries = make([]nbt.Compound, len(names))
+			for i, name := range names {
+				// NBT 混合列表用空键 compound 包装字符串，统一保留这种磁盘形状。
+				entries[i] = nbt.Compound{"": name}
+			}
+			ok = true
+		}
 		if !ok || len(entries) == 0 || len(entries) > 4096 {
 			return nil, fmt.Errorf("invalid block palette")
 		}
 		palette := make([]ir.IRBlock, len(entries))
 		for i, entry := range entries {
-			name, ok := entry["Name"].(string)
+			nameKey, propertiesKey := "Name", "Properties"
+			_, legacy := entry[nameKey]
+			if !legacy {
+				nameKey, propertiesKey = "id", "properties"
+				if _, wrapped := entry[""]; wrapped {
+					nameKey = ""
+				}
+				s.modernPalette = true
+			}
+			name, ok := entry[nameKey].(string)
 			if !ok {
-				return nil, fmt.Errorf("palette entry %d requires Name", i)
+				return nil, fmt.Errorf("palette entry %d requires string %q", i, nameKey)
 			}
 			props := map[string]any{}
-			if raw, exists := entry["Properties"]; exists {
+			if raw, exists := entry[propertiesKey]; exists {
 				var ok bool
 				props, ok = raw.(map[string]any)
 				if !ok {
-					return nil, fmt.Errorf("Properties must be a compound")
+					return nil, fmt.Errorf("%s must be a compound", propertiesKey)
 				}
 				for key, value := range props {
 					if _, ok := value.(string); !ok {
 						return nil, fmt.Errorf("Java property %s must be a string", key)
+					}
+				}
+				props = maps.Clone(props)
+			}
+			if !legacy {
+				// 预置表只解释已知属性；未知方块和显式属性保持存档中的值。
+				defaults, _ := java_blocks.BlockProperties(name)
+				for key, property := range defaults {
+					if _, exists := props[key]; !exists {
+						value, err := strconv.Unquote(property.Default)
+						if err != nil {
+							return nil, err
+						}
+						props[key] = value
 					}
 				}
 			}
@@ -266,6 +302,7 @@ func decodeSection(value nbt.Compound) (*Section, error) {
 }
 
 func (s *Section) encode() (nbt.Compound, error) {
+	// 将编辑后的层写回原 NBT，沿用来源调色板的字段命名和未改动条目。
 	if s.Y < -128 || s.Y > 127 {
 		return nil, fmt.Errorf("section Y outside Byte range: %d", s.Y)
 	}
@@ -291,9 +328,13 @@ func (s *Section) encode() (nbt.Compound, error) {
 			if err := block.States().CastToString().DecodeToHL(encoder_go.NewGoObjEncoder(&props, encoder_go.EncodeOption{})); err != nil {
 				return nil, err
 			}
-			entries[i] = nbt.Compound{"Name": block.NameWithNameSpace()}
+			nameKey, propertiesKey := "Name", "Properties"
+			if s.modernPalette {
+				nameKey, propertiesKey = "id", "properties"
+			}
+			entries[i] = nbt.Compound{nameKey: block.NameWithNameSpace()}
 			if len(props) > 0 {
-				entries[i]["Properties"] = props
+				entries[i][propertiesKey] = props
 			}
 		}
 		states, _ := value["block_states"].(nbt.Compound)
@@ -302,6 +343,20 @@ func (s *Section) encode() (nbt.Compound, error) {
 			states = nbt.Compound{}
 		}
 		states["palette"] = entries
+		// 全部仍为字符串时保留紧凑列表；混合条目已经是合法的 compound 列表。
+		if s.modernPalette {
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				name, wrapped := entry[""].(string)
+				if !wrapped {
+					break
+				}
+				names = append(names, name)
+			}
+			if len(names) == len(entries) {
+				states["palette"] = names
+			}
+		}
 		indices := make([]int, 4096)
 		for i := range indices {
 			indices[i] = s.Blocks.GetIndex(layer_storage.At(i&15, i>>8, i>>4&15))
