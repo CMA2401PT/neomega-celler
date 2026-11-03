@@ -4,6 +4,8 @@
 
 存档先以原始记录或完整 NBT 文档读入，再按需要解释其中的方块和其他数据。编辑一个 section 后，把它写回所属区块，最后保存区块。Section 是 16×16×16 的空间区域。这样的读取方式保留了尚未解释的记录与字段，也让调用者可以直接处理原始数据。
 
+消费者可以从下方的原生存档 API 和可运行示例开始；模块结构、变更约束与验收见 [AGENTS.md](AGENTS.md)。
+
 ## 从世界文件到层存储
 
 两种存档各自提供原生区块模型。内存中的方块层使用 `layer_storage`，它以调色板、平铺数组或稀疏映射保存 4096 个值。
@@ -148,7 +150,7 @@ Java section 编辑支持现代 `sections` / `block_states` / `biomes` 结构及
 
 读取后返回的数据由调用者持有。提取 section 后，应通过 `SetSection` 应用对方块层和生物群系的修改。嵌套 NBT 使用普通 Go map、slice 和 array；同时处理同一份文档时，由调用者安排所有权。
 
-## 运行示例与验收
+## 运行示例
 
 本地开发使用 Go 1.25.5。将 `neomega-celler`、`neomega-blocks`、`neomega-nbt` 和 `neomega-packfs` 放在同级目录，供模块的本地替换引用。
 
@@ -164,7 +166,6 @@ go run ./neomega-celler/examples/inspect-java \
 go run ./neomega-celler/examples/inspect-java \
   -pack /path/to/world.pack -dimension DIM-1 -x -2 -z 3
 
-./check.sh neomega-nbt neomega-celler neomega-viewer neomega-converter
 ```
 
-测试自行建立临时存档，覆盖 Bedrock 多层与条目版本、Java 原生 palette、未知 NBT 字段保留、负坐标、MCC 内外切换、PackFS 快照及导出目录后重新读取。
+完整代码见 [Bedrock 检查示例](examples/inspect-bedrock/main.go) 和 [Java 检查示例](examples/inspect-java/main.go)。路径需替换为自己的已有存档，区块必须实际存在。
