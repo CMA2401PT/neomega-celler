@@ -282,3 +282,34 @@ func TestReadChunkActors(t *testing.T) {
 		t.Fatal("accepted malformed digp")
 	}
 }
+
+func TestWriteChunkActors(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "world")
+	w, err := Open(dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	pos := celler.ChunkPos{X: -1, Z: 4}
+	actors := []Actor{
+		{ID: [8]byte{1, 2, 3, 4, 5, 6, 7, 8}, NBT: nbt.Document{Value: nbt.Compound{"identifier": "minecraft:zombie"}}},
+		{ID: [8]byte{9, 10, 11, 12, 13, 14, 15, 16}, NBT: nbt.Document{Value: nbt.Compound{"identifier": "minecraft:pig"}}},
+	}
+	if err := w.WriteChunkActors(1, pos, actors); err != nil {
+		t.Fatal(err)
+	}
+	documents, err := w.ReadChunkActors(1, pos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(documents) != 2 || documents[0].Value["identifier"] != "minecraft:zombie" || documents[1].Value["identifier"] != "minecraft:pig" {
+		t.Fatalf("actors: %#v", documents)
+	}
+	if err := w.WriteChunkActors(1, pos, nil); err != nil {
+		t.Fatal(err)
+	}
+	documents, err = w.ReadChunkActors(1, pos)
+	if err != nil || len(documents) != 0 {
+		t.Fatalf("cleared actors: %#v, %v", documents, err)
+	}
+}

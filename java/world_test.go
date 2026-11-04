@@ -239,3 +239,39 @@ func TestRegionExternalAndRepeatedEdits(t *testing.T) {
 		})
 	}
 }
+
+func TestReadChunkEntities(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "world")
+	w, err := OpenDirectory(dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	pos := celler.ChunkPos{X: 2, Z: -3}
+	document := nbt.Document{Value: nbt.Compound{
+		"DataVersion": int32(4189), "Position": nbt.Array([]int32{2, -3}),
+		"Entities": []nbt.Compound{{"id": "minecraft:zombie"}},
+	}}
+	data, err := nbt.EncodeDocument(document, nbt.EncodingBigEndian)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := region.Compress(data, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = w.WriteRaw(Overworld, Entities, pos, record); err != nil {
+		t.Fatal(err)
+	}
+	entities, err := w.ReadChunkEntities(Overworld, pos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entities) != 1 || entities[0]["id"] != "minecraft:zombie" {
+		t.Fatalf("entities: %#v", entities)
+	}
+	entities, err = w.ReadChunkEntities(Overworld, celler.ChunkPos{})
+	if err != nil || len(entities) != 0 {
+		t.Fatalf("missing record: %#v, %v", entities, err)
+	}
+}

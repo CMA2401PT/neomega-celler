@@ -112,6 +112,37 @@ func (w *World) ReadChunkActors(dimension int32, pos celler.ChunkPos) ([]nbt.Doc
 	return documents, nil
 }
 
+// Actor 是一条待写入的 Bedrock 实体记录。ID 是 digp 里的 8 字节实体键。
+type Actor struct {
+	ID  [8]byte
+	NBT nbt.Document
+}
+
+// WriteChunkActors 写入一个柱子的 digp 索引和每条 actorprefix 记录。
+// actors 为空时删除该柱的 digp 记录。
+func (w *World) WriteChunkActors(dimension int32, pos celler.ChunkPos, actors []Actor) error {
+	if w.closed {
+		return fs.ErrClosed
+	}
+	digp := append([]byte("digp"), ChunkPrefix(pos, dimension)...)
+	ids := make([]byte, 0, len(actors)*8)
+	for _, actor := range actors {
+		data, err := nbt.EncodeDocument(actor.NBT, nbt.EncodingLittleEndian)
+		if err != nil {
+			return err
+		}
+		key := append([]byte("actorprefix"), actor.ID[:]...)
+		if err := w.DB.Put(key, data, nil); err != nil {
+			return err
+		}
+		ids = append(ids, actor.ID[:]...)
+	}
+	if len(ids) == 0 {
+		return w.DB.Delete(digp, nil)
+	}
+	return w.DB.Put(digp, ids, nil)
+}
+
 func (w *World) WriteChunk(c *Chunk, options *opt.WriteOptions) error {
 	if w.closed {
 		return fs.ErrClosed

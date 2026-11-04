@@ -237,6 +237,30 @@ func (w *World) Scan(dim Dimension, kind RegionKind, fn func(celler.ChunkPos) er
 	return nil
 }
 
+// ReadChunkEntities 读取一个柱子的实体记录。没有记录时返回 nil。
+func (w *World) ReadChunkEntities(dim Dimension, pos celler.ChunkPos) ([]nbt.Compound, error) {
+	record, err := w.ReadRaw(dim, Entities, pos)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	data, err := record.Decode()
+	if err != nil {
+		return nil, err
+	}
+	document, err := nbt.DecodeDocument(data, nbt.EncodingBigEndian)
+	if err != nil {
+		return nil, err
+	}
+	entities, ok := nbt.Compounds(document.Value["Entities"])
+	if !ok {
+		return nil, fmt.Errorf("Entities must be a compound list")
+	}
+	return entities, nil
+}
+
 // ReadLevel reads the gzip-compressed level.dat document, including its root name.
 func (w *World) ReadLevel() (nbt.Document, error) {
 	if w.closed {
