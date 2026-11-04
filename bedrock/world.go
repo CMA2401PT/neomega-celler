@@ -75,6 +75,43 @@ func (w *World) ReadChunk(dimension int32, pos celler.ChunkPos) (*Chunk, error) 
 
 // WriteChunk atomically replaces this chunk's recognized record set, preserving
 // all other database keys. WriteOptions.Sync selects per-batch durability.
+// ReadChunkActors 读取一个柱子的实体。Bedrock 用 digp 记录保存每柱的实体 id，
+// 每个 id 对应一条 actorprefix 记录；缺失的 actor 记录直接跳过。
+func (w *World) ReadChunkActors(dimension int32, pos celler.ChunkPos) ([]nbt.Document, error) {
+	if w.closed {
+		return nil, fs.ErrClosed
+	}
+	key := append([]byte("digp"), ChunkPrefix(pos, dimension)...)
+	data, err := w.DB.Get(key, nil)
+	if errors.Is(err, leveldb.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data)%8 != 0 {
+		return nil, fmt.Errorf("digp record length %d is not a multiple of 8", len(data))
+	}
+	documents := make([]nbt.Document, 0, len(data)/8)
+	for offset := 0; offset < len(data); offset += 8 {
+		actorKey := append([]byte("actorprefix"), data[offset:offset+8]...)
+		value, err := w.DB.Get(actorKey, nil)
+		if errors.Is(err, leveldb.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		document, err := nbt.DecodeDocument(value, nbt.EncodingLittleEndian)
+		if err != nil {
+			// 单条实体损坏不应让整柱读取失败。
+			continue
+		}
+		documents = append(documents, document)
+	}
+	return documents, nil
+}
+
 func (w *World) WriteChunk(c *Chunk, options *opt.WriteOptions) error {
 	if w.closed {
 		return fs.ErrClosed

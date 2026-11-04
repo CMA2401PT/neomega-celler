@@ -233,3 +233,52 @@ func TestBiomeRecordRoundTrip(t *testing.T) {
 		t.Fatal("accepted invalid palette")
 	}
 }
+
+func TestReadChunkActors(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "world")
+	w, err := Open(dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	pos := celler.ChunkPos{X: 2, Z: -3}
+	actorID := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	value, err := nbt.EncodeDocument(nbt.Document{Value: nbt.Compound{
+		"identifier": "minecraft:zombie",
+		"Pos":        []float32{0, 64, 0},
+	}}, nbt.EncodingLittleEndian)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = w.DB.Put(append([]byte("actorprefix"), actorID...), value, nil); err != nil {
+		t.Fatal(err)
+	}
+	// digp 的值是每 8 字节一个实体 id；第二条记录不存在，应被跳过而不是报错。
+	ids := append([]byte{}, actorID...)
+	ids = append(ids, []byte{9, 9, 9, 9, 9, 9, 9, 9}...)
+	digp := append([]byte("digp"), ChunkPrefix(pos, 1)...)
+	if err = w.DB.Put(digp, ids, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	documents, err := w.ReadChunkActors(1, pos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(documents) != 1 || documents[0].Value["identifier"] != "minecraft:zombie" {
+		t.Fatalf("actors: %#v", documents)
+	}
+
+	documents, err = w.ReadChunkActors(0, pos)
+	if err != nil || len(documents) != 0 {
+		t.Fatalf("missing digp: %#v, %v", documents, err)
+	}
+
+	if err = w.DB.Put(append([]byte("digp"), ChunkPrefix(celler.ChunkPos{}, 0)...), []byte{1}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.ReadChunkActors(0, celler.ChunkPos{}); err == nil {
+		t.Fatal("accepted malformed digp")
+	}
+}
