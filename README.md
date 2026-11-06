@@ -26,6 +26,7 @@ java.World   → 目录 / PackFS → MCA/MCC → java.Section    → 一个方�
 | `java` | 原生区块 NBT、section、世界元数据和维度目录 |
 | `java/region` | MCA 槽位、扇区分配、压缩记录和外置 MCC 文件 |
 | `storage` | 文件后端接口、本机目录与 PackFS 适配 |
+| `bedrock/mcworld` | zip 中的基岩世界只读容器 |
 
 NBT 文档读写使用 `neomega-nbt/presets/v1`。`neomega-blocks/ir` 提供方块名称与属性的文本表示。`neomega-packfs` 提供容器、提交和快照。
 
@@ -139,6 +140,12 @@ world, err := java.Open(
 创建快照前调用 `world.Flush()`，然后调用 `container.Snapshot(name)`，因为 Snapshot 自身会提交容器。关闭容器之前先关闭 world；PackFS 的 Close 也会提交容器。恢复快照之前关闭 world 及其他文件句柄，恢复后重新打开 world，避免继续使用旧 region 头表。
 
 一个 world 及其文件后端由同一个 goroutine 使用。区块解码、计算和压缩可以在独立任务中完成，再把独占的结果交给文件所有者写入。
+
+## 世界包与结构文件
+
+`bedrock/mcworld.Open` 只读打开 `.mcworld`；返回句柄的 `Bedrock()` 提供原生 `*bedrock.World`，继续按区块和 subchunk 访问。未压缩的 zip 条目按原文件偏移读取。deflate 条目首次访问时展开到内存，因为 LevelDB 需要在条目内部随机读取。`Close` 先关数据库，再关闭 zip 文件。
+
+schem、schematic、litematic、nbt 和 mcstructure 保存有限体积，没有区块索引。它们由 [converter-core 的 structure](../neomega-converter-core/README.md#结构文件写成原生存档) 流式转换成 Java 或 Bedrock 世界，再交给本模块读取。该转换器也能逐条解压 mcworld 到磁盘，适合需要限制内存的浏览应用。
 
 ## 格式与错误约定
 

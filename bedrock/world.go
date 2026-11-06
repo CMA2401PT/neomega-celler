@@ -51,6 +51,12 @@ func Open(directory string, options Options) (*World, error) {
 	return w, nil
 }
 
+// NewReadOnly 用已经打开的数据库和世界文件组成只读世界。
+// mcworld 的 LevelDB 不在目录里，调用方负责在 Close 之后释放自己的文件。
+func NewReadOnly(db *leveldb.DB, files fs.FS) *World {
+	return &World{DB: db, Files: files, readOnly: true}
+}
+
 func (w *World) ReadChunk(dimension int32, pos celler.ChunkPos) (*Chunk, error) {
 	if w.closed {
 		return nil, fs.ErrClosed

@@ -6,7 +6,7 @@ Bedrock 以 LevelDB 区块记录为原始单位，Java 以完整区块 NBT 为�
 
 ## 结构与边界
 
-`bedrock` 管理原生区块记录、section 和世界元数据，`bedrock/leveldb` 配置数据库引擎。`java` 管理区块 NBT 与维度，`java/region` 处理 MCA 扇区、压缩与外置 MCC。`storage` 将世界文件访问接到目录或 PackFS，`layer_storage` 独立保存 16³ 个可比较值。
+`bedrock` 管理原生区块记录、section 和世界元数据，`bedrock/leveldb` 配置数据库引擎。`java` 管理区块 NBT 与维度，`java/region` 处理 MCA 扇区、压缩与外置 MCC。`storage` 将世界文件访问接到目录或 PackFS，`layer_storage` 独立保存 16³ 个可比较值。`bedrock/mcworld` 只读访问 zip 中的原生基岩世界。没有 chunk/subchunk 索引的结构文件由 converter-core 的 `structure` 解析并写成原生存档。
 
 模块依赖方块 IR、NBT 与 PackFS 基础库，不引入转换规则、邻接修复或渲染职责。方块版本属于 Bedrock 调色板条目，不能挪为 section 统一版本。
 
