@@ -91,6 +91,8 @@ func (w *World) Close() error {
 	return err
 }
 
+// worldRoot 返回世界在压缩包里的目录前缀，世界在根上时为空串。
+// level.dat 或 db/ 出现在同一层才算一个世界，出现两个世界就报错。
 func worldRoot(entries map[string]*zip.File) (string, error) {
 	if hasWorld(entries, "") {
 		return "", nil
@@ -118,6 +120,7 @@ func worldRoot(entries map[string]*zip.File) (string, error) {
 	return found, nil
 }
 
+// hasWorld 检查 prefix 这一层是否像基岩世界：有 level.dat，或 db/ 下有 LevelDB 文件。
 func hasWorld(entries map[string]*zip.File, prefix string) bool {
 	if entries[prefix+"level.dat"] != nil || entries[prefix+"db/CURRENT"] != nil {
 		return true
@@ -131,6 +134,8 @@ func hasWorld(entries map[string]*zip.File, prefix string) bool {
 	return false
 }
 
+// dbEntries 取出世界 db/ 下的顶层文件，键是去掉前缀的文件名。
+// LevelDB 只读 CURRENT、MANIFEST 和 *.ldb/*.sst 这些顶层文件，子目录不参与。
 func dbEntries(entries map[string]*zip.File, root string) map[string]*zip.File {
 	out := map[string]*zip.File{}
 	prefix := root + "db/"

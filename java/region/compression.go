@@ -41,6 +41,7 @@ func (r Record) Decode() ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
+// compressionBuffer 是池里复用的编码器与输出缓冲；Bytes 由 Compress 复制后交出去。
 type compressionBuffer struct {
 	bytes.Buffer
 	writer *zlib.Writer
