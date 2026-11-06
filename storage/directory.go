@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 )
 
@@ -83,8 +84,8 @@ func (d *Directory) Rename(oldName, newName string) error {
 	return err
 }
 
-// Commit synchronizes changed files and their parent directories. Ordinary
-// filesystem commits do not provide PackFS's atomic multi-file publication.
+// Commit 同步修改过的文件；非 Windows 平台还同步父目录。
+// Windows 的普通目录句柄不支持这里的 Sync；提交不提供跨文件原子发布。
 func (d *Directory) Commit() error {
 	paths := map[string]bool{}
 	for name := range d.dirty {
@@ -104,10 +105,22 @@ func (d *Directory) Commit() error {
 	sort.Sort(sort.Reverse(sort.StringSlice(names)))
 	for _, name := range names {
 		p, _ := d.local(name)
-		f, err := os.Open(p)
+		info, err := os.Stat(p)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
+		if err != nil {
+			return err
+		}
+		flag := os.O_WRONLY
+		if info.IsDir() {
+			if runtime.GOOS == "windows" {
+				continue
+			}
+			flag = os.O_RDONLY
+		}
+		// Windows 的 FlushFileBuffers 要求 GENERIC_WRITE，不能用 os.Open 的只读句柄。
+		f, err := os.OpenFile(p, flag, 0)
 		if err != nil {
 			return err
 		}

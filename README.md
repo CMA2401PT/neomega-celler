@@ -133,7 +133,7 @@ world, err := java.Open(
 写入过程分为两个层次：
 
 1. `world.Flush()` 将所有 region 的数据和头表写入文件后端。
-2. `world.Commit()` 先执行 Flush，再提交后端。PackFS 此时发布整组文件的新状态；目录后端同步修改过的文件及父目录。
+2. `world.Commit()` 先执行 Flush，再提交后端。PackFS 此时发布整组文件的新状态；目录后端用可写句柄同步修改过的文件，非 Windows 平台还同步父目录。Windows 不对普通目录句柄调用 Sync，因此不承诺目录项的显式同步。
 
 `world.Close()` 刷新并释放 region 句柄。需要明确持久化时，应先成功调用 `world.Commit()`。本机目录的同步不具有 PackFS 的多文件原子发布能力。
 
