@@ -25,6 +25,7 @@ func (c *EncodedChunk) Size() int { return len(c.data.Dump()) }
 
 // EncodeChunk 只编码，不访问世界。actors 为 nil 时不改实体索引；非 nil 空列表删除索引。
 // 不同任务可以并行调用，但输入区块及实体 NBT 必须由各任务独占。
+// 每条记录都按 ChunkPrefix 反解校验：Records 是导出字段，写错后缀会在这里立刻暴露。
 func EncodeChunk(chunk *Chunk, actors []Actor) (*EncodedChunk, error) {
 	encoded := &EncodedChunk{Pos: chunk.Pos, Dimension: chunk.Dimension}
 	prefix := ChunkPrefix(chunk.Pos, chunk.Dimension)
