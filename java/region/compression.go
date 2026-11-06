@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/pierrec/lz4/v4"
 )
@@ -40,17 +41,31 @@ func (r Record) Decode() ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-// Compress produces a zlib record. Its timestamp is supplied by the caller.
+type compressionBuffer struct {
+	bytes.Buffer
+	writer *zlib.Writer
+}
+
+// 每次压缩独占一个编码器；复用其字典与工作数组，避免逐区块重新分配。
+var compressors = sync.Pool{New: func() any {
+	buffer := &compressionBuffer{}
+	buffer.writer = zlib.NewWriter(&buffer.Buffer)
+	return buffer
+}}
+
+// Compress 生成独立持有载荷的 zlib 记录，可并行调用；时间戳由调用方提供。
 func Compress(data []byte, timestamp uint32) (Record, error) {
-	var buffer bytes.Buffer
-	writer := zlib.NewWriter(&buffer)
-	if _, err := writer.Write(data); err != nil {
+	buffer := compressors.Get().(*compressionBuffer)
+	defer compressors.Put(buffer)
+	buffer.Buffer.Reset()
+	buffer.writer.Reset(&buffer.Buffer)
+	if _, err := buffer.writer.Write(data); err != nil {
 		return Record{}, err
 	}
-	if err := writer.Close(); err != nil {
+	if err := buffer.writer.Close(); err != nil {
 		return Record{}, err
 	}
-	return Record{Compression: Zlib, Data: buffer.Bytes(), Timestamp: timestamp}, nil
+	return Record{Compression: Zlib, Data: bytes.Clone(buffer.Bytes()), Timestamp: timestamp}, nil
 }
 
 // Java uses the LZ4Block stream framing, rather than the LZ4 frame format.

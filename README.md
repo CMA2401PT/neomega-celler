@@ -113,7 +113,7 @@ return world.Commit()
 
 `Section.Blocks == nil` 表示缺少方块字段，例如仅保存光照的 section。Java 生物群系使用独立的 4×4×4 采样数组，顺序是 Y-Z-X。`SectionYs` 从实际记录枚举高度。
 
-`ReadRaw` 和 `WriteRaw` 访问带时间戳的压缩记录，适合保留现有压缩数据，或在计算任务中提前完成压缩。`Scan` 枚举实际存在的槽位。`ReadLevel` 和 `WriteLevel` 处理 gzip 压缩的 `level.dat`。
+`ReadRaw` 和 `WriteRaw` 访问带时间戳的压缩记录，适合保留现有压缩数据，或在计算任务中提前完成压缩。`region.Compress` 可并行调用，内部复用独占的 zlib 工作区，每次返回的记录独立持有压缩字节。`Scan` 枚举实际存在的槽位。`ReadLevel` 和 `WriteLevel` 处理 gzip 压缩的 `level.dat`。
 
 `NewChunk` 只初始化坐标、格式版本和 section 列表。创建完整区块时，由调用者提供目标存档需要的生成状态等字段。
 
