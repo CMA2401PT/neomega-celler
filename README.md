@@ -84,6 +84,14 @@ return world.WriteChunk(chunk, &opt.WriteOptions{Sync: true})
 
 方块实体通过 `BlockEntities` 和 `SetBlockEntities` 读写，保留其原始位置、ID 和 NBT 类型。`Biomes2D` 对应二维高度与生物群系记录；`Biomes3D` 保留 16³ 数值 palette 和“沿用上一 section”的标记。三维记录首个 section 的 Y 由维度高度定义决定，记录本身不携带它。
 
+## Bedrock：并行编码与批量写入
+
+批量转换需要让计算任务独立编码，再由世界句柄的所有者提交数据库。`bedrock.EncodeChunk(chunk, actors)` 将一根原生区块及实体编码成 `EncodedChunk`，结果独立持有字节，输入随后可以释放。不同任务可并行编码各自的输入。`actors == nil` 保留已有实体索引，非 nil 空列表删除该柱的实体索引。
+
+`world.WriteChunks(records, WriteChunksOptions{})` 将多根柱子连同实体放进一个 LevelDB batch。每批的区块坐标与维度组合必须唯一。默认模式清理同坐标的旧区块记录，保持普通替换行为；其他数据库键不变。新建世界的导入者可以指定 `NewWorld: true`，承诺这些坐标尚未写入，省去旧记录扫描。
+
+调用方按 `EncodedChunk.Size()` 限制待提交数据量，并为合并 batch 预留一份编码字节的副本。`WriteOptions` 控制该 batch 的持久化要求。该接口不提供整图回滚，也不清理旧索引曾指向但不再使用的 actorprefix 记录。
+
 ## Java：编辑完整 NBT 中的 section
 
 `java.OpenDirectory` 打开本机世界目录。`java.Open` 接收文件后端；可写后端实现 `storage.Writer`，只读后端可以是 `os.DirFS` 或 PackFS 快照视图。
@@ -113,7 +121,7 @@ return world.Commit()
 
 `Section.Blocks == nil` 表示缺少方块字段，例如仅保存光照的 section。Java 生物群系使用独立的 4×4×4 采样数组，顺序是 Y-Z-X。`SectionYs` 从实际记录枚举高度。
 
-`ReadRaw` 和 `WriteRaw` 访问带时间戳的压缩记录，适合保留现有压缩数据，或在计算任务中提前完成压缩。`region.Compress` 可并行调用，内部复用独占的 zlib 工作区，每次返回的记录独立持有压缩字节。`Scan` 枚举实际存在的槽位。`ReadLevel` 和 `WriteLevel` 处理 gzip 压缩的 `level.dat`。
+`ReadRaw` 和 `WriteRaw` 访问带时间戳的压缩记录，适合保留现有压缩数据，或在计算任务中提前完成压缩。`region.Compress` 可并行调用，内部复用独占的 zlib 工作区，每次返回的记录独立持有压缩字节。`DecodeChunk` 与 `DecodeEntities` 可在计算任务内解码已经读取并解压的地形及实体 NBT。`Scan` 枚举实际存在的槽位。`ReadLevel` 和 `WriteLevel` 处理 gzip 压缩的 `level.dat`。
 
 `NewChunk` 只初始化坐标、格式版本和 section 列表。创建完整区块时，由调用者提供目标存档需要的生成状态等字段。
 

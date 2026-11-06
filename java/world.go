@@ -250,6 +250,11 @@ func (w *World) ReadChunkEntities(dim Dimension, pos celler.ChunkPos) ([]nbt.Com
 	if err != nil {
 		return nil, err
 	}
+	return DecodeEntities(data)
+}
+
+// DecodeEntities 解码一条独立的 Java 实体 NBT，供并行任务处理已读取的原始记录。
+func DecodeEntities(data []byte) ([]nbt.Compound, error) {
 	document, err := nbt.DecodeDocument(data, nbt.EncodingBigEndian)
 	if err != nil {
 		return nil, err
